@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  ci:
+    if: github.event.created
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: ci
+    runs-on: ubuntu-latest
+    outputs:
+      maintenance: ${{ steps.validate.outputs.maintenance }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 校验发布标签
+        id: validate
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo '发布标签必须采用 vX.Y.Z 格式。' >&2
+            exit 1
+          fi
+          maintenance_branch="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.x"
+          maintenance_ref="refs/remotes/origin/$maintenance_branch"
+          if git show-ref --verify --quiet "$maintenance_ref" && git merge-base --is-ancestor HEAD "$maintenance_ref"; then
+            echo 'maintenance=true' >> "$GITHUB_OUTPUT"
+          elif git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo 'maintenance=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "发布标签必须指向已进入 main 或 $maintenance_branch 的提交。" >&2
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 构建 Python 发行包
+        run: uv build --all-packages --no-create-gitignore --out-dir dist
+
+      - name: 打包 OpenCode npm 插件
+        working-directory: packages/opencode-file-provenance
+        run: npm pack --pack-destination ../../dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: dist
+
+      - name: 发布 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MAINTENANCE_RELEASE: ${{ needs.build.outputs.maintenance }}
+        run: |
+          release_flags=(--verify-tag --generate-notes)
+          if [[ "$MAINTENANCE_RELEASE" == 'true' ]]; then
+            release_flags+=(--latest=false)
+          fi
+          gh release create "$GITHUB_REF_NAME" "${release_flags[@]}" dist/*.whl dist/*.tar.gz dist/*.tgz
