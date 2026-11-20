@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""pre-push 黑名单词检测：扫描本次推送新增的行，命中即打回并给出替换建议。
+"""扫描推送或 PR 新增行中的黑名单词，并给出替换建议。
 
 由 .githooks/pre-push 调用，Git 把待推送 refs 写到 stdin，每行四个字段：
 <local ref> <local sha> <remote ref> <remote sha>。只检查分支推送新增的行，
@@ -21,6 +21,8 @@ tag 与分支删除跳过。词表默认是同目录 ai-words.txt（可用 --con
 格式「词 => 建议」，`#` 注释，`!` 前缀行是豁免路径（fnmatch 匹配仓库相对
 路径）；词表文件自身不参与扫描。词按子串匹配；纯英文条目暂不支持
 （配置时报错）。
+
+CI 通过 --pr BASE HEAD 扫描 PR 共同祖先到最新提交的最终差异。
 
 仅依赖标准库、兼容 Python 3.9：hook 运行在 .venv 创建之前。
 
@@ -50,6 +52,14 @@ CONFIG_NAME = "ai-words.txt"
 ZERO_SHA_RE = re.compile(r"^0+$")
 COMMIT_RE = re.compile(r"^COMMIT ([0-9a-f]{40})(?: (.*))?$")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+PATCH_OPTIONS = (
+    "-U0",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
 
 
 class ConfigError(Exception):
@@ -90,7 +100,7 @@ class Hit(NamedTuple):
 
 
 def fail(message: str, exit_code: int = EXIT_BLOCKED) -> NoReturn:
-    logger.error("pre-push 词检: %s", message)
+    logger.error("词检: %s", message)
     raise CheckFailureError(exit_code)
 
 
@@ -271,12 +281,7 @@ def _log_args(expr: list[str]) -> list[str]:
         "core.quotepath=false",
         "log",
         "-p",
-        "-U0",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
+        *PATCH_OPTIONS,
         "--format=COMMIT %H %s",
         *expr,
     ]
@@ -298,17 +303,17 @@ def _line_hits(
     ]
 
 
-def scan_range(
-    expr: list[str], rules: list[Rule], excludes: list[str], config_rel: str | None
+def scan_patch(
+    lines: Iterator[str], rules: list[Rule], excludes: list[str], config_rel: str | None
 ) -> list[Hit]:
-    """扫描一个修订表达式引入的新增行，返回命中列表。"""
+    """扫描 Git 补丁中的新增行，返回命中列表。"""
     hits: list[Hit] = []
     current_sha = ""
     current_subject = ""
     current_path: str | None = None
     line_number = 0
     in_hunk = False
-    for line in git_lines(*_log_args(expr)):
+    for line in lines:
         if line.startswith("COMMIT "):
             match = COMMIT_RE.match(line)
             if match:
@@ -325,7 +330,7 @@ def scan_range(
             current_path = None
             in_hunk = False
             continue
-        if line.startswith("+++ "):
+        if not in_hunk and line.startswith("+++ "):
             current_path = parse_path(line[4:])
             in_hunk = False
             continue
@@ -345,13 +350,19 @@ def scan_range(
     return hits
 
 
-def print_report(hits: list[Hit]) -> None:
-    out = ["pre-push 词检：本次推送的新增行命中黑名单词，push 已打回。", ""]
+def print_report(hits: list[Hit], *, pr_mode: bool) -> None:
+    heading = (
+        "PR 词检：新增行命中黑名单词。"
+        if pr_mode
+        else "pre-push 词检：本次推送的新增行命中黑名单词，push 已打回。"
+    )
+    out = [heading, ""]
     grouped: dict = {}
     for hit in hits:
         grouped.setdefault((hit.sha, hit.subject), []).append(hit)
     for (sha, subject), group in grouped.items():
-        out.append(f"  {sha[:12]} {subject}")
+        if sha:
+            out.append(f"  {sha[:12]} {subject}")
         for hit in group:
             out.append(f"    {hit.path}:{hit.line}  命中「{hit.word}」→ {hit.suggestion}")
     out.append("")
@@ -370,12 +381,13 @@ def main(argv: list[str]) -> int:
 
 def _run(argv: list[str]) -> int:
     config_path = Path(__file__).resolve().parent / CONFIG_NAME
+    pr_mode = len(argv) == 4 and argv[1] == "--pr"
     if len(argv) == 3 and argv[1] == "--config":
         config_path = Path(argv[2])
     elif len(argv) == 2 and argv[1].startswith("--config="):
         config_path = Path(argv[1].split("=", 1)[1])
-    elif len(argv) != 1:
-        fail("用法: check_ai_words.py [--config PATH]")
+    elif len(argv) != 1 and not pr_mode:
+        fail("用法: check_ai_words.py [--config PATH | --pr BASE HEAD]")
     if not config_path.is_file():
         fail(f"词表缺失: {config_path}", EXIT_BAD_CONFIG)
     try:
@@ -384,11 +396,16 @@ def _run(argv: list[str]) -> int:
         fail(str(error), EXIT_BAD_CONFIG)
     if not rules:
         return 0
-    refs = [line.strip() for line in sys.stdin if line.strip()]
+    if pr_mode:
+        base, head = argv[2:]
+        patches = [["-c", "core.quotepath=false", "diff", *PATCH_OPTIONS, f"{base}...{head}", "--"]]
+    else:
+        refs = [line.strip() for line in sys.stdin if line.strip()]
+        patches = [_log_args(expr) for expr in ref_expressions(refs)]
     hits: list[Hit] = []
     config_rel = repo_relative(config_path)
-    for expr in ref_expressions(refs):
-        hits.extend(scan_range(expr, rules, excludes, config_rel))
+    for args in patches:
+        hits.extend(scan_patch(git_lines(*args), rules, excludes, config_rel))
     seen = set()
     unique_hits: list[Hit] = []
     for hit in hits:
@@ -397,7 +414,7 @@ def _run(argv: list[str]) -> int:
             seen.add(key)
             unique_hits.append(hit)
     if unique_hits:
-        print_report(unique_hits)
+        print_report(unique_hits, pr_mode=pr_mode)
         return EXIT_BLOCKED
     return 0
 

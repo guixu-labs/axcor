@@ -9,10 +9,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+
+      - name: PR 用词检查
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/check_ai_words.py --pr "$PR_BASE" "$PR_HEAD"
 
       - name: 安装锁定依赖
         run: uv sync --locked
