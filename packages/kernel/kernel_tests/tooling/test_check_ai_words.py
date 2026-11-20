@@ -126,6 +126,32 @@ def test_chinese_word_blocks_with_location_and_suggestion(tmp_path: Path) -> Non
     assert CHINESE_SUGGESTION in result.stderr
 
 
+def test_pr_scans_only_final_additions_since_merge_base(tmp_path: Path) -> None:
+    """目标分支前进和 PR 中间提交不会造成误报。"""
+    repo = make_repo(tmp_path)
+    existing = repo / "existing.md"
+    existing.write_text(CHINESE_WORD + "\n", encoding="utf-8")
+    commit(repo, "base commit")
+    git(repo, "branch", "feature")
+    existing.unlink()
+    base = commit(repo, "advance target branch")
+    git(repo, "switch", "feature")
+
+    guide = repo / "guide.md"
+    guide.write_text("++ " + CHINESE_WORD + "\n", encoding="utf-8")
+    head = commit(repo, "add guide")
+    result = run_check(repo, "", "--pr", base, head)
+    assert result.returncode == 1
+    assert "guide.md:1" in result.stderr
+    assert CHINESE_SUGGESTION in result.stderr
+    assert "existing.md" not in result.stderr
+
+    guide.write_text("本文档描述任务调度流程。\n", encoding="utf-8")
+    head = commit(repo, "revise guide")
+    result = run_check(repo, "", "--pr", base, head)
+    assert result.returncode == 0, result.stderr
+
+
 def test_ascii_word_rejected(tmp_path: Path) -> None:
     """英文条目暂不支持：配置时报错，而不是按子串误匹配。"""
     config = tmp_path / "words.txt"
