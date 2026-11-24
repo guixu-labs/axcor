@@ -1040,6 +1040,13 @@ def test_custom_names_backfill_on_load(tmp_path: Path) -> None:
     settings = rotator.get_global_settings_dict()
     assert [key["custom_name"] for key in settings["api_keys"]] == expected
 
+    state = json.loads((tmp_path / "auth_state.json").read_text(encoding="utf-8"))
+    assert [provider["custom_name"] for provider in state["providers"]] == expected
+    reloaded = _rotator(tmp_path)
+    assert [provider.custom_name for provider in reloaded.get_providers()] == expected
+    saved_entries = GlobalSettings.load(tmp_path / "settings.conf").api_keys
+    assert all("custom_name" not in entry for entry in saved_entries)
+
 
 @pytest.mark.asyncio
 async def test_set_keys_auto_custom_name_and_manual_requirement(
