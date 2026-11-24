@@ -1048,6 +1048,34 @@ def test_custom_names_backfill_on_load(tmp_path: Path) -> None:
     assert all("custom_name" not in entry for entry in saved_entries)
 
 
+def test_global_settings_custom_name_fallback_keeps_provider_indexes(
+    tmp_path: Path,
+) -> None:
+    """全局设置回退取 provider 名时按有效 key 条目对齐 provider 序号。"""
+    from workflow_controller.core.auth_rotator.settings import GlobalSettings
+
+    GlobalSettings(
+        api_keys=[
+            {
+                "key": "sk-1",
+                "model": "one",
+                "base_url": "https://a.test/v1",
+                "runtime": "claude_sdk",
+                "custom_name": "a",
+            },
+            {
+                "key": "sk-2",
+                "model": "two",
+                "base_url": "https://b.test/v1",
+                "runtime": "codex_cli",
+            },
+        ]
+    ).save(tmp_path / "settings.conf")
+
+    settings = _rotator(tmp_path).get_global_settings_dict()
+    assert [entry["custom_name"] for entry in settings["api_keys"]] == ["a", "two"]
+
+
 @pytest.mark.asyncio
 async def test_set_keys_auto_custom_name_and_manual_requirement(
     tmp_path: Path,

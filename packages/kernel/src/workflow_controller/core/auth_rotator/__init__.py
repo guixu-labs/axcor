@@ -1035,13 +1035,14 @@ class AuthRotator:
             if entry.get("runtime"):
                 masked_entry["runtime"] = entry["runtime"]
             custom_name = entry.get("custom_name")
-            if not custom_name and key.strip():
-                provider = (
-                    self._providers[provider_index]
-                    if provider_index < len(self._providers)
-                    else None
-                )
-                custom_name = provider.custom_name if provider is not None else None
+            if key.strip():
+                if not custom_name:
+                    provider = (
+                        self._providers[provider_index]
+                        if provider_index < len(self._providers)
+                        else None
+                    )
+                    custom_name = provider.custom_name if provider is not None else None
                 provider_index += 1
             if custom_name:
                 masked_entry["custom_name"] = custom_name
