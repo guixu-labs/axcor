@@ -1037,6 +1037,8 @@ def test_custom_names_backfill_on_load(tmp_path: Path) -> None:
     status = rotator.get_key_status_dict()
     assert [provider["custom_name"] for provider in status["providers"]] == expected
     assert [key["custom_name"] for key in rotator.get_api_keys_for_ui()] == expected
+    settings = rotator.get_global_settings_dict()
+    assert [key["custom_name"] for key in settings["api_keys"]] == expected
 
 
 @pytest.mark.asyncio

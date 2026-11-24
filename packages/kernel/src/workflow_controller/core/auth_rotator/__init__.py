@@ -1021,16 +1021,27 @@ class AuthRotator:
     def get_global_settings_dict(self) -> dict[str, Any]:
         s = self._load_global_settings()
         masked_keys = []
+        provider_index = 0
         for entry in s.api_keys:
-            masked_entry: dict[str, str] = {"key": _mask_key_for_display(entry.get("key", ""))}
+            key = entry.get("key", "")
+            masked_entry: dict[str, str] = {"key": _mask_key_for_display(key)}
             if entry.get("model"):
                 masked_entry["model"] = entry["model"]
             if entry.get("base_url"):
                 masked_entry["base_url"] = entry["base_url"]
             if entry.get("runtime"):
                 masked_entry["runtime"] = entry["runtime"]
-            if entry.get("custom_name"):
-                masked_entry["custom_name"] = entry["custom_name"]
+            custom_name = entry.get("custom_name")
+            if not custom_name and key.strip():
+                provider = (
+                    self._providers[provider_index]
+                    if provider_index < len(self._providers)
+                    else None
+                )
+                custom_name = provider.custom_name if provider is not None else None
+                provider_index += 1
+            if custom_name:
+                masked_entry["custom_name"] = custom_name
             masked_keys.append(masked_entry)
         return {
             "api_keys": masked_keys,
