@@ -1081,6 +1081,30 @@ async def test_set_keys_auto_custom_name_and_manual_requirement(
 
 
 @pytest.mark.asyncio
+async def test_set_keys_empty_model_conflict_names_automatic_provider_name(
+    tmp_path: Path,
+) -> None:
+    """空模型自动名冲突时提示自动命名，避免误称模型名。"""
+    rotator = _rotator(tmp_path)
+    named = {
+        "key": "sk-1",
+        "model": "glm",
+        "base_url": "https://a.test/v1",
+        "runtime": "claude_sdk",
+        "custom_name": "provider-2",
+    }
+    blank_model = {
+        "key": "sk-2",
+        "model": "",
+        "base_url": "https://b.test/v1",
+        "runtime": "claude_cli",
+    }
+
+    with pytest.raises(ValueError, match="自动命名 provider-2 已被占用"):
+        await rotator.set_keys_validated([named, blank_model])
+
+
+@pytest.mark.asyncio
 async def test_set_keys_reuses_single_valid_capability_after_provider_reordering(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

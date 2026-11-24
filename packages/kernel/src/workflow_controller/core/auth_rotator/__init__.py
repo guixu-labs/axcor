@@ -792,13 +792,16 @@ class AuthRotator:
                 # 新条目模型名未被任何自定义名占用即自动命名，否则要求手动输入。
                 # 模型是可选字段：空模型以条目序号命名，不强制手动输入。
                 inherited = (existing.custom_name or "").strip() if existing else ""
-                auto_name = entry["model"].strip() or f"provider-{position + 1}"
+                model_name = entry["model"].strip()
+                auto_name = model_name or f"provider-{position + 1}"
                 if inherited and inherited not in claimed_custom_names:
                     custom_name = inherited
                 elif auto_name not in claimed_custom_names:
                     custom_name = auto_name
-                else:
+                elif model_name:
                     raise ValueError(f"模型名 {auto_name} 已被自定义名占用，请输入自定义名")
+                else:
+                    raise ValueError(f"自动命名 {auto_name} 已被占用，请输入自定义名")
             claimed_custom_names.add(custom_name)
             entry["custom_name"] = custom_name
             if existing is not None and _existing_validations_match(existing, fingerprint):
