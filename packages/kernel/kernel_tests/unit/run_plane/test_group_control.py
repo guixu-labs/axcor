@@ -457,21 +457,22 @@ class TestPauseResume:
 
     async def test_pause_drains_inflight_birth_late_session_caught(self, tmp_path):
         """受理时出生在途——排空后才逐成员暂停，迟到成员不逃逸。"""
-        h = GroupHarness(tmp_path, FakeFactory("fake@1", OneShotDriver("late")))
-        h.so.birth_gates["late"] = asyncio.Event()
+        # 名字带 slow 防替身自动收口：成员须活到组暂停扫掠，用例才有判定意义
+        h = GroupHarness(tmp_path, FakeFactory("fake@1", OneShotDriver("late-slow")))
+        h.so.birth_gates["late-slow"] = asyncio.Event()
         run_id = await h.start()
         rt = getattr(h.coord, "_runtimes")[run_id]
         await h.eventually(lambda: rt.in_flight == 1)
 
         async def _release() -> None:
             await asyncio.sleep(0.05)
-            h.so.birth_gates["late"].set()
+            h.so.birth_gates["late-slow"].set()
 
         releaser = asyncio.get_running_loop().create_task(_release())
         record = await h.coord.pause_run(run_id)
         await releaser
         assert record.status == "paused"
-        assert h.so.paused == [h.session_by_name("late").id]
+        assert h.so.paused == [h.session_by_name("late-slow").id]
         assert (await h.store.list_run_sessions(run_id))[0].paused_by == "run"
 
     async def test_batch_start_frozen_by_pause_pumped_after_resume(self, tmp_path):

@@ -26,3 +26,6 @@ node_modules/
 /workflow-controller.yaml
 /workflow-controller-config.yaml
 workflow-controller.db
+
+# 本地文档
+docs/local/

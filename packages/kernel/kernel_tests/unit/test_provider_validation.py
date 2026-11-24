@@ -322,16 +322,29 @@ async def test_codex_worker_probe_waits_for_iteration_end(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["glm-5.3", "glm-5.2"])
 async def test_codex_preset_catalog_is_installed_and_injected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     captured = _codex_preset_probe_env(monkeypatch)
+
+    async def fake_reviewer_request(self, prompt: str, **kwargs) -> HttpResult:
+        """Return a successful reviewer probe without network access."""
+
+        return HttpResult(text="OK", is_error=False, error="")
+
+    monkeypatch.setattr(
+        AnthropicHttpClient,
+        "request",
+        fake_reviewer_request,
+    )
     rotator = _rotator(tmp_path)
 
     result = await rotator.validate_candidate(
         "sk",
-        "glm-5.3",
+        model,
         "https://open.bigmodel.cn/api/v1",
         "codex_cli",
         force=True,

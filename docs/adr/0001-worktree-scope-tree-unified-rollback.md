@@ -1,0 +1,93 @@
+---
+type: adr
+title: "ADR-0001：采用 git worktree 写者作用域树实现工作区隔离与统一回滚"
+status: Accepted
+owner: "chenyangwang"
+created: 2026-11-23
+updated: 2026-11-24
+related_specs:
+  - docs/specs/traceback-workspace-rollback.md
+  - docs/specs/rsi-online-repair-loop.md
+related_plans:
+  - docs/plans/rsi-online-loop-implementation.md
+---
+
+# ADR-0001：采用 git worktree 写者作用域树实现工作区隔离与统一回滚
+
+> 本仓首个 ADR。本决策的协议细节以 [traceback 工作区隔离与统一回滚规格](../specs/traceback-workspace-rollback.md) 为冻结版本，本文只记录决策本身、被否决的方案与后果，不重复协议全文。
+
+## 状态
+
+Accepted（2026-11-23）。协议于 2026-11-24 冻结（S0a 三轮评审落档），进入实现阶段；后续改动走设计评审。
+
+## 背景
+
+[RSI 在线时长修复闭环](../specs/rsi-online-repair-loop.md) 要求 OpsBot 支持「节点超时 → 暂停 → 诊断修复 → 回滚 → 断点继续」的在线闭环，其中回滚是核心新增能力。现状存在三个结构性问题：
+
+1. **共享工作目录**：Graph 的全部 session（并行节点、executor/verifier、bash 子进程）直接读写同一个 `$WORK_DIR`（`packages/plugins/graph/src/workflow_controller/plugins/graph/driver/engine.py` 中 7 处 `cwd=self._work_dir`），框架层面没有隔离、归属或冲突检测；当前 Glacier 仅靠 YAML 依赖顺序串行化共享修改。
+2. **现有 agent_traceback 插件为「已跑完的单 session」设计**：整目录快照无并发单元归属，检查点账本无作用域/代次概念，fork 恢复脱离 Run 归属，快照失败为 best-effort——不满足在线回滚的强前提。
+3. **「并发单元不得修改同一文件」只是工作流设计者的口头约定**，运行期无法检测、无法报错。
+
+「整目录快照 + 全局写入静止」的直接方案在并行场景下有三条结构性困难：每次打点需全局禁止写入；恢复点会被其他节点的中间产物污染；无法检测正常运行时的同文件互相覆盖。共同根源是所有并发单元共享一个物理目录。
+
+## 决策
+
+采用 **git worktree 写者作用域树**作为文件态隔离与回滚的唯一主线，具体含以下一组相互绑定的子决策：
+
+### 主决策
+
+- **统一写者作用域树**：Graph Run 与独立单 session 共用同一模型——集成根作用域 → 主写者作用域（节点 executor / 单 session 主 agent）→ 子代理作用域。每个可能写文件的执行单元默认拥有独立 worktree；子代理完成时在父作用域写入闸门内、结果交付前合并回父作用域；Graph 节点验收通过并集成成功后才算 `passed`。
+- **回滚 = 异步确认链上的作用域操作组合**：节点回滚与子代理回滚共用同一异步动作/通知确认链与通用 `plan_restore`，由 `AbandonScope` / `RestoreScope` / `PrepareScopeWorkspace` 组合完成。未合并节点回滚 = 废弃目标作用域并在**当前集成头**重建（redo on latest integration head），严格局部（目标 scope epoch+1）；已合并回滚 = 集成线回退 + 选择性保留换序重放（基线谱系不含目标的写者保留不重跑，spec §9.2.1）+ root epoch 递增。崩溃恢复按三阶段 saga + 三态核对：**分叉即停，绝不自动 reset**。
+- **冲突检测档位化，默认以可合并性为准**：配置项 `conflict_policy` 两档——`git_merge`（默认）下两个并发写者改同一 merge 路径、但三方合并干净（如一方改文件上半、另一方改下半）即放行，只有真实合并冲突才发 `fault.workspace_conflict`；`strict` 档退化为路径集重叠即违规（无论 Git 能否自动合并）。公共基准为各作用域的 `integration_base_commit`（不是含物化产物的 `scope_base_commit`），且限定 merge 路径集，杜绝本地产物误报。
+- **写入静止缩小为单作用域局部闸门**：RUNNING→QUIESCING→QUIESCED→操作→RUNNING；多数时点由「父 agent 停在 tool 调用上」结构性保证，仅后台进程需有界排空；父阻塞在 task result 上时不得延迟集成，超时以 `fault.scope_quiesce_failed` 收口，父 agent 绝不无限等待。
+- **能力迁入主代码，插件分阶段退出**：新增 `core/workspace/`、`core/checkpoints.py`（平铺，对偶 `core/runs.py`）、`core/restore/` 与通用动作/通知协议；迁移期插件经 SDK 端口调用核心（不 import `core`，遵守架构门禁）；`agent_traceback` 在全部开发完成、既有用户能力迁移完毕且测试通过后才退役删除，`file_provenance` 不在删除范围。
+- **实施顺序**：Graph 节点级垂直切片与 RSI fix-findings 闭环先行（P0–P3），dispatch_group + 子代理回滚 + 已合并回滚其次（P4），单 session 迁移与插件退出最后（P5）。首期 fix-findings 节点无内部子代理，不需要先实现子代理能力。
+
+### 产品决策（已与需求方确认）
+
+| 决策 | 选择 |
+|---|---|
+| D1 单 session 文件态 | 统一作用域树（与 Graph 共用 worktree 隔离/检查点/恢复）；snapshot 只用于历史数据读取、离线导入等兼容场景 |
+| D2 worktree 无法安全建立 | **fail-fast 拒绝**，不自动降级保证 |
+| D3 已合并节点回滚 | **选择性保留（换序重放）**：回退集成线到目标建区基线，基线谱系（`integration_base_commit` 祖先链）含目标集成提交的写者失效重跑、不含的按原集成序重放保留、不重跑（安全论证与边界见 spec §9.2.1）；root epoch 递增，旧 epoch 请求照旧拒绝 |
+| D4 子代理默认策略 | **默认独立 worktree（writer）**；reader 是声明式优化（已发布 commit 的只读快照） |
+| D5 单 session 目录可见性 | **终态同步**：运行期间原目录保持基线不变，提供 live view 端点；session 完成后按三方同步（基线参照）写回原目录 |
+| D6 私有仓历史视图 | **默认单基线提交**（agent 的 `git log` 不见原项目历史）；需要历史的工作流可选开启只读历史导入 |
+| D7 无屏障 runtime 的落地路线 | **双轨并行**：claude SDK 路径先行 + opencode 上 writer 子代理 fail-closed（拒绝启动）；同时推动上游 pre-spawn hook，并评估宿主接管 task 工具 |
+| D8 隔离强度定位 | **协作式 + 审计**：防误操作与可归因为主（信任自派 agent），`file_provenance` 审计跨边界写；OS 级硬隔离（只读挂载/沙箱）为后续可选强化，不在第一版 |
+| D9 冲突检测默认档 | **git_merge（可合并性为准）**：同一文件被双方修改但三方合并干净即放行；`strict` 档保留「路径集重叠即违规」的硬保证，供需要「并发单元不得改同一文件」强约束的场景显式开启 |
+
+## 被否决的方案
+
+| 方案 | 否决理由 |
+|---|---|
+| A. 整目录快照 + 全局写入静止 | 并行场景三条结构性困难（全局静止、中间产物污染恢复点、无法检测同文件并发覆盖）；保留为显式 snapshot 兼容模式，仅用于历史数据读取与离线导入 |
+| C. CoW 文件系统（每写者一层 overlay） | 效率最优，但不可移植、需特权；无合并/集成语义，回滚只能整层丢弃 |
+| D. 目录全量复制（每写者一份拷贝） | 磁盘 O(N×全量)；无合并语义，回滚只能整目录删除 |
+| E. 仅声明/文件锁（登记写路径、共目录运行） | 不隔离，只能做事前预检，无法回滚 |
+
+C/D 同样可以对 overlay 上层或每写者副本做路径 diff 与写者归属，其真实短板是部署（特权/文件系统）、磁盘空间与没有合并语义。worktree 方案的决定性优势是**检测、归属、检查点、集成、回滚全部复用同一套 Git 机制与对象库**，且可移植（git ≥ 2.5）、无特权要求。
+
+## 后果
+
+### 正面
+
+- 运行期写隔离 + 档位化冲突检测 + 作用域级局部回滚：默认 `git_merge` 档放行可自动合并的同文件并行写、只对真实合并冲突报错；`strict` 档下「并发单元不改同一文件」从口头约定变为可检测、可报错的执行时保证。
+- 回滚边界干净：未合并回滚不触碰其他作用域；「文件检查点与对话边界表示同一逻辑时刻」由 dispatch_group 组检查点保证。
+- 文件归属天然可得：每次进入父树的 merge-path diff 就是该写者的产出清单。
+- 不要求全局静止，只要求单作用域局部静止。
+
+### 代价与风险
+
+- 工作区检出成本（缓解：对象库共享、sparse、复用）；构建产物是否全部纳入 Git 由量化 spike（规格 §4.3 对应的五项指标）用数据决定，不强制全部入 Git。
+- 严格子代理隔离依赖 runtime 屏障能力（拦截/cwd 注入/本地静止/锚点/副作用组仲裁五项）；opencode 上游支持是前置依赖（D7 双轨），缺 cwd 注入的 runtime 上 writer 子代理被拒绝启动。
+- 单 session 运行期间原目录保持不变（D5）是**产品行为变更**，依赖目录内容的本地工具会受影响，需文档与迁移指南明示。
+- 节点内 `$WORK_DIR` 绝对路径引用需迁移（注入 `WORKSPACE_DIR`）。
+- `git_merge` 默认档放行同文件并行修改：三方合并后的文件组合未经任何 verifier 验收（各写者只验过己方视图下的完整文件），「并发单元不改同一文件」从口头约定变为可检测、可报错的执行时保证只在 `strict` 档成立（D9 的显性代价；ADR 背景问题 3 在默认档下是「可检测、可归因」而非「被禁止」）。
+- worktree 隔离是协作式保证，不是对抗任意进程逃逸的安全沙箱（D8）。
+
+## 备注
+
+- 冲突检测档位（D9）为 2026-11-24 修订：初版只有「路径集重叠即违规」一档，默认过严（同文件不相交区域的并行修改被误伤）；默认档改为 `git_merge` 后，初版语义保留为 `strict` 档。
+- 构建产物路径策略（`op/build/**` 等）的最终取值以量化 spike 结论为准；spike 指标不可接受时相应路径改 `rebuildable` 或评估内容寻址产物仓 / reflink，本决策其余部分不变。
+- 量化 spike 结论（2026-11-24，macOS/Apple Silicon、git 2.54、APFS，合成目录模拟自定义算子工作区：构建产物 1 GiB/2000 文件、源码 4000 文件、用户仓 `.git` 64 MB，每轮刷新 25% 产物）：初始基线导入 34 s；单节点 worktree 建区 1.2 s（对象库共享，检出不含产物仅 111 MB）；回滚恢复 2.5 s、废弃重建 4.5 s；下游继承产物物化 2.8–3.6 s——以上均为秒级，可接受。构建产物纳入 checkpointed 时每轮打点 6 s 耗时、磁盘 +230~245 MB（随打点轮数线性增长），排除产物的对照打点为 0.19 s/+0.1 MB；测量现场按最坏口径（产物纳入检查点、双作用域各物化一份副本）净占用约为目录本体的 5 倍——根检出 + 含打点增量的私有仓 + 每作用域一份产物副本，产物走 rebuildable 时私有仓不含产物、作用域产物由重建脚本生成，磁盘显著低于该值。**结论：GB 级构建产物路径维持 `writer_local + rebuildable`、不纳入检查点提交**；无法确定性重建而退回 `checkpointed` 时接受秒级打点耗时，但须关注磁盘线性增长（私有仓 gc 压实耗时 64 s，不宜高频触发）。测量工具为仓内 `scripts/workspace_scope_spike.py`，可换参数复测。
