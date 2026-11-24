@@ -162,6 +162,15 @@ Session 创建与 runtime 激活构成原子生命周期：`pool.create` 会先�
 停止已部分创建的 Reviewer/runtime、清除 overlay，并从 pool 与 events.db 回滚该 session。
 只有激活成功返回后，调用方才能把临时工作目录的清理责任移交给 session 删除链路。
 
+Provider 池每个条目带全局唯一的 `custom_name` 显示名（随 `settings.conf` 条目持久化，
+`auth_state.json` 同步冗余）：保存整池时，留空条目在模型名未被任何自定义名占用的前提下
+自动取模型名，被占用则要求调用方显式命名，显式名重复以 400 拒绝；空模型条目按序号
+`provider-<N>` 自动命名。加载无该字段的存量数据时按池内顺序确定性回填——模型名优先，
+冲突取第一个空闲的 `<模型名>-backup-<N>`（N 从 2 递增）；回填值随加载写入 auth_state.json，settings.conf
+待下一次整池保存时写入。
+自定义名只用于 UI 展示与
+Provider 身份区分，`provider_index`/model 绑定语义不受影响。
+
 宿主不做目录级写入互斥：任意 session（含跨 run 的成员）可并发操作同一工作目录，
 启动、恢复、播放或重启均不检查目录占用。并发写同一目录的协调（任务划分、文件分工、
 git 兜底）属调用方责任。SessionConfig 的 `provider_index`/`model`

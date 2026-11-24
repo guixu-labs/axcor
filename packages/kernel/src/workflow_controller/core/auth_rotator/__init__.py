@@ -338,6 +338,7 @@ class AuthRotator:
                 "model": p.model,
                 "base_url": p.base_url,
                 "runtime": p.runtime or self._runtime,
+                "custom_name": p.custom_name,
                 "model_catalog_path": p.model_catalog_path,
                 "worker_validation": p.worker_validation.to_dict(),
                 "reviewer_validation": p.reviewer_validation.to_dict(),
@@ -771,7 +772,8 @@ class AuthRotator:
         kind_sources: list[str | None] = []
         used_existing: set[int] = set()
         seen_fingerprints: set[str] = set()
-        for raw in keys:
+        claimed_custom_names: set[str] = set()
+        for position, raw in enumerate(keys):
             resolved = await _resolve_settings_entry(
                 raw, config_dir=self._config_dir, default_runtime=self._runtime
             )
@@ -781,6 +783,24 @@ class AuthRotator:
             existing, kind_source, fingerprint = self._entry_kind_context(
                 candidate, entry, used_existing, seen_fingerprints
             )
+            custom_name = entry["custom_name"]
+            if custom_name:
+                if custom_name in claimed_custom_names:
+                    raise ValueError(f"自定义名重复：{custom_name}")
+            else:
+                # 整池提交：已有条目优先继承旧名（旧客户端未回传时不重测不重名）；
+                # 新条目模型名未被任何自定义名占用即自动命名，否则要求手动输入。
+                # 模型是可选字段：空模型以条目序号命名，不强制手动输入。
+                inherited = (existing.custom_name or "").strip() if existing else ""
+                auto_name = entry["model"].strip() or f"provider-{position + 1}"
+                if inherited and inherited not in claimed_custom_names:
+                    custom_name = inherited
+                elif auto_name not in claimed_custom_names:
+                    custom_name = auto_name
+                else:
+                    raise ValueError(f"模型名 {auto_name} 已被自定义名占用，请输入自定义名")
+            claimed_custom_names.add(custom_name)
+            entry["custom_name"] = custom_name
             if existing is not None and _existing_validations_match(existing, fingerprint):
                 result = self._validation_payload(existing, fingerprint)
             else:
@@ -902,6 +922,7 @@ class AuthRotator:
                 new_providers.append(_new_provider_from_entry(pk, kind_url))
 
         self._providers = new_providers
+        self._ensure_unique_custom_names()
         self._reconcile_after_sync()
 
     def delete_provider(self, provider_index: int) -> bool:
@@ -1008,6 +1029,8 @@ class AuthRotator:
                 masked_entry["base_url"] = entry["base_url"]
             if entry.get("runtime"):
                 masked_entry["runtime"] = entry["runtime"]
+            if entry.get("custom_name"):
+                masked_entry["custom_name"] = entry["custom_name"]
             masked_keys.append(masked_entry)
         return {
             "api_keys": masked_keys,
@@ -1044,6 +1067,9 @@ class AuthRotator:
             provider = (
                 self._providers[provider_index] if provider_index < len(self._providers) else None
             )
+            # conf 未回写回填名时以 provider 侧（auth_state.json）为准。
+            if entry.get("custom_name") or (provider is not None and provider.custom_name):
+                item["custom_name"] = entry.get("custom_name") or provider.custom_name
             if provider is not None:
                 item["worker_validation"] = provider.worker_validation.to_dict()
                 item["reviewer_validation"] = provider.reviewer_validation.to_dict()
@@ -1814,6 +1840,8 @@ class AuthRotator:
         existing.base_url = pk.base_url
         existing.runtime = pk.runtime or existing.runtime
         existing.model_catalog_path = pk.model_catalog_path
+        # conf 条目未写自定义名时保留旧值（存量回填/手动命名不因 sync 丢失）。
+        existing.custom_name = pk.custom_name or existing.custom_name
         # settings.conf 里的 kind 一律是显式配置（探测值只存
         # auth_state.json 的 provider，set_keys_validated 不写回
         # conf）：显式配置直接按当前 effective URL 生效。conf 未写
@@ -1895,6 +1923,26 @@ class AuthRotator:
         else:
             active.status = KeyStatus.ACTIVE
             self._persist()
+
+    def _ensure_unique_custom_names(self) -> None:
+        """加载期回填/收敛自定义名，保证池内全局唯一。
+
+        显式名先到先得；缺失时取模型名，被占用则取第一个空闲的
+        <模型名>-backup-<N>（N 从 2 递增），模型也缺失时以
+        provider-<序号> 为基底。按池内顺序确定性分配，多次加载结果
+        一致；结果随 _persist 写 auth_state.json，settings.conf 不回写，
+        下次 sync 由同规则重现（显式名仍从条目带出）。
+        """
+        used: set[str] = set()
+        for index, provider in enumerate(self._providers):
+            requested = (provider.custom_name or "").strip()
+            if requested and requested not in used:
+                name = requested
+            else:
+                base = (provider.model or "").strip() or f"provider-{index + 1}"
+                name = base if base not in used else _free_backup_name(base, used)
+            used.add(name)
+            provider.custom_name = name
 
     # --- Internal ----------------------------------------------------------
 
@@ -2200,6 +2248,7 @@ async def _resolve_settings_entry(
         "model": str(raw.get("model") or "").strip(),
         "base_url": str(raw.get("base_url") or "").strip(),
         "runtime": runtime,
+        "custom_name": str(raw.get("custom_name") or "").strip(),
         "model_catalog_path": model_catalog_path,
         # 条目里的 kind 只应是 settings.conf 的显式配置（端点风格
         # 特殊时手工纠偏），原样持久化；探测出的 kind 只落
@@ -2244,12 +2293,21 @@ def _new_provider_from_entry(pk: ParsedKey, kind_url: str | None) -> AuthProvide
         model=pk.model,
         base_url=pk.base_url,
         runtime=pk.runtime,
+        custom_name=pk.custom_name,
         model_catalog_path=pk.model_catalog_path,
         provider_kind=pk.provider_kind,
         provider_kind_url=kind_url if pk.provider_kind else None,
         provider_kind_source="explicit" if pk.provider_kind else None,
         status=KeyStatus.UNUSED,
     )
+
+
+def _free_backup_name(base: str, used: set[str]) -> str:
+    """取第一个空闲的 <base>-backup-<N>（N 从 2 递增）。"""
+    n = 2
+    while f"{base}-backup-{n}" in used:
+        n += 1
+    return f"{base}-backup-{n}"
 
 
 def _mask_key(key: str | None) -> str | None:

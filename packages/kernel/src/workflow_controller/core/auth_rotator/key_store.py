@@ -38,6 +38,7 @@ class ParsedKey:
     model: str | None = None
     base_url: str | None = None
     runtime: str | None = None
+    custom_name: str | None = None
     model_catalog_path: str | None = None
     provider_kind: str | None = None
 
@@ -50,6 +51,7 @@ def parse_key_entry(entry: dict[str, str]) -> ParsedKey | None:
     model = entry.get("model", "").strip() or None
     base_url = entry.get("base_url", "").strip() or None
     runtime = entry.get("runtime", "").strip() or None
+    custom_name = entry.get("custom_name", "").strip() or None
     model_catalog_path = entry.get("model_catalog_path", "").strip() or None
     provider_kind = entry.get("provider_kind", "").strip() or None
     return ParsedKey(
@@ -57,6 +59,7 @@ def parse_key_entry(entry: dict[str, str]) -> ParsedKey | None:
         model=model,
         base_url=base_url,
         runtime=runtime,
+        custom_name=custom_name,
         model_catalog_path=model_catalog_path,
         provider_kind=provider_kind,
     )

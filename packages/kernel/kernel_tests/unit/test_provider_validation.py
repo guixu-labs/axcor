@@ -997,6 +997,87 @@ async def test_set_keys_reuses_validations_after_provider_reordering(
     assert [provider.key for provider in rotator.get_providers()] == ["sk-2", "sk-1"]
 
 
+def test_custom_names_backfill_on_load(tmp_path: Path) -> None:
+    """存量无自定义名加载时确定性回填：模型名优先，冲突取 backup 序号。"""
+    from workflow_controller.core.auth_rotator.settings import GlobalSettings
+
+    GlobalSettings(
+        api_keys=[
+            {
+                "key": "sk-1",
+                "model": "glm",
+                "base_url": "https://a.test/v1",
+                "runtime": "claude_sdk",
+            },
+            {
+                "key": "sk-2",
+                "model": "glm",
+                "base_url": "https://b.test/v1",
+                "runtime": "codex_cli",
+            },
+            {
+                "key": "sk-3",
+                "model": "glm",
+                "base_url": "https://c.test/v1",
+                "runtime": "claude_sdk",
+            },
+            {
+                "key": "sk-4",
+                "model": "sonnet",
+                "base_url": "https://d.test/v1",
+                "runtime": "claude_sdk",
+            },
+        ]
+    ).save(tmp_path / "settings.conf")
+
+    rotator = _rotator(tmp_path)
+
+    expected = ["glm", "glm-backup-2", "glm-backup-3", "sonnet"]
+    assert [provider.custom_name for provider in rotator.get_providers()] == expected
+    status = rotator.get_key_status_dict()
+    assert [provider["custom_name"] for provider in status["providers"]] == expected
+    assert [key["custom_name"] for key in rotator.get_api_keys_for_ui()] == expected
+
+
+@pytest.mark.asyncio
+async def test_set_keys_auto_custom_name_and_manual_requirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """保存时模型名未被占用即自动命名；被占用要求手动输入且全局唯一。"""
+    from workflow_controller.core.auth_rotator.settings import GlobalSettings
+
+    _counting_probe_env(monkeypatch)
+    rotator = _rotator(tmp_path)
+    first = {
+        "key": "sk-1",
+        "model": "glm",
+        "base_url": "https://a.test/v1",
+        "runtime": "claude_sdk",
+    }
+    second = {
+        "key": "sk-2",
+        "model": "glm",
+        "base_url": "https://b.test/v1",
+        "runtime": "claude_cli",
+    }
+
+    await rotator.set_keys_validated([first])
+    assert rotator.get_provider(0).custom_name == "glm"
+    assert GlobalSettings.load(tmp_path / "settings.conf").api_keys[0]["custom_name"] == "glm"
+
+    with pytest.raises(ValueError, match="请输入自定义名"):
+        await rotator.set_keys_validated([first, second])
+
+    second["custom_name"] = "glm-cli"
+    await rotator.set_keys_validated([first, second])
+    assert [provider.custom_name for provider in rotator.get_providers()] == ["glm", "glm-cli"]
+
+    duplicate = {**second, "key": "sk-3", "custom_name": "glm"}
+    with pytest.raises(ValueError, match="自定义名重复"):
+        await rotator.set_keys_validated([first, second, duplicate])
+
+
 @pytest.mark.asyncio
 async def test_set_keys_reuses_single_valid_capability_after_provider_reordering(
     tmp_path: Path,
