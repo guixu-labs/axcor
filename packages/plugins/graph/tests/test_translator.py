@@ -25,7 +25,6 @@ import yaml
 
 from workflow_controller.plugins.graph import translator
 
-
 SCENARIOS_DIR = Path(__file__).parent / "fixtures" / "graph-test"
 EXAMPLE_YAML = SCENARIOS_DIR / "graph-workflow.yaml"
 GOLDEN_FILE = Path(__file__).parent / "golden" / "graph_workflow_ir.json"
