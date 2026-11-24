@@ -14,14 +14,9 @@
 
 from __future__ import annotations
 
-from tests.architecture.dependency_debt import Debt
+from typing import TYPE_CHECKING
 
-BOUNDARY_DEBT: tuple[Debt, ...] = (
-    # 仅剩组合根保留项：app.state.orchestrator 作为 Console 装配器的输入
-    Debt(
-        "web-no-state-orchestrator",
-        "src/workflow_controller/web/app.py",
-        "app.state.orchestrator",
-        "orchestrator",
-    ),
-)
+if TYPE_CHECKING:
+    from tests.architecture.dependency_debt import Debt
+
+BOUNDARY_DEBT: tuple[Debt, ...] = ()

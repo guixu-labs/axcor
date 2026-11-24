@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-# 裸 pytest 直跑（未安装包）时回退本仓 src；单仓与 workspace 布局按向上探测
+# 裸 pytest 直跑（未安装包）时回退包内 src（向上探测内核包根）
 _src_root = next(
     (
         p / "src"

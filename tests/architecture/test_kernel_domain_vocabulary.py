@@ -60,7 +60,7 @@ KERNEL_FILES = ("__main__.py", "headless.py", "logging_config.py")
 # 领域词汇：context_bay / cannbot / 独立成词的 CANN
 DOMAIN_TERM_PATTERN = re.compile(r"context_bay|cannbot|\bcann\b", re.IGNORECASE)
 
-# 词汇白名单：文件 → 允许命中次数；插件路径条目仅在 workspace 布局（插件同仓成包）生效
+# 词汇白名单：文件 → 允许命中次数；条目仅在源文件在场时参与互锁（导出子集免检）
 DOMAIN_TERM_WHITELIST = {
     # 跨系统格式标识（meta 包装行键），转录编码中立化后仅剩此一处
     "src/workflow_controller/core/run_export.py": 1,
@@ -75,7 +75,6 @@ DOMAIN_TERM_WHITELIST = {
     "src/workflow_controller/plugins/agent_traceback/session_reconstructor/orchestrator.py": 7,
     "src/workflow_controller/plugins/agent_traceback/web_api.py": 2,
 }
-_PLUGIN_WHITELIST_PREFIX = "src/workflow_controller/plugins/"
 
 # 任意协议 URL 中的 user:pass@ 明文凭据
 CREDENTIAL_URL_PATTERN = re.compile(r"[a-z][a-z0-9+.\-]*://[^\s/@:]+:[^\s/@]+@", re.IGNORECASE)
@@ -128,7 +127,7 @@ _PLAIN_BODY = '"""模块说明。"""\n\nTERM = "context_bay"\n'
 
 
 def _normalized_key(path: Path) -> str:
-    """扫描文件的归一化 src/... 键（两种布局同键）。"""
+    """扫描文件的归一化 src/... 键（多源码根统一键）。"""
     for root in source_roots():
         if path.resolve().is_relative_to(root.resolve()):
             return normalized_virtual_path(path, root)
@@ -136,9 +135,7 @@ def _normalized_key(path: Path) -> str:
 
 
 def _plugin_py_files() -> Iterator[tuple[Path, str]]:
-    """插件源码扫描面：仅 workspace 布局（插件同仓成包）生效。"""
-    if len(source_roots()) == 1:
-        return
+    """插件源码扫描面（各插件包）。"""
     for path in builtin_plugin_py_files():
         yield path, _normalized_key(path)
 
@@ -173,14 +170,11 @@ def test_kernel_domain_vocabulary_matches_exact_whitelist() -> None:
         if count:
             hits[key] = count
 
-    # 插件路径白名单条目仅在插件入扫描面（workspace 布局）且源文件在本布局
-    # 在场时参与互锁（导出子集缺该插件时条目免检）
-    plugin_face_active = len(source_roots()) > 1
+    # 插件路径白名单条目仅在源文件在场时参与互锁（导出子集缺该插件时条目免检）
     active_whitelist = {
         key: allowed
         for key, allowed in DOMAIN_TERM_WHITELIST.items()
-        if (plugin_face_active or not key.startswith(_PLUGIN_WHITELIST_PREFIX))
-        and normalized_source_exists(key)
+        if normalized_source_exists(key)
     }
     drifted = sorted(set(hits) | set(active_whitelist))
     details = [

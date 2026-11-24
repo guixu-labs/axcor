@@ -27,7 +27,7 @@ from workflow_controller.plugins.graph import translator
 
 
 def _repo_root() -> Path:
-    """向上定位含 examples 的仓根（单仓与 workspace 插件包布局通用）。"""
+    """向上定位含 examples 的仓根（全仓与导出子集通用）。"""
     for directory in Path(__file__).resolve().parents:
         if (directory / "examples").is_dir():
             return directory

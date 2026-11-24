@@ -851,7 +851,7 @@ axcor/
 └── docs/
 ```
 
-内核各包职责（api/core/…）与单仓布局一致；控制台（Web UI、路由装配、Insight 反代）不在本仓，作为控制台发行包消费内核稳定 API。
+内核各包职责（api/core/…）以本仓内核包为准；控制台（Web UI、路由装配、Insight 反代）不在本仓，作为控制台发行包消费内核稳定 API。
 
 ## File Provenance（V1）
 

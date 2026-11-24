@@ -19,13 +19,12 @@ def find_upward(start: Path, relative_marker: str) -> Path:
 def subprocess_python_paths(start: Path) -> list[str]:
     """子进程 import 路径：仓根（tests.support 可导入）与全部 workflow_controller 源码根。
 
-    单仓布局只有仓根 src；workspace 布局为内核与各插件包的 src 目录——
-    已安装发行包时冗余但无害，未安装时保证子进程可导入。
+    覆盖内核与各插件包的 src 目录——已安装发行包时冗余但无害，
+    未安装时保证子进程可导入。
     """
     repo_root = find_upward(start, "tests/support")
     candidates = [
         repo_root,
-        repo_root / "src",
         repo_root / "packages" / "kernel" / "src",
         *sorted((repo_root / "packages" / "plugins").glob("*/src")),
     ]

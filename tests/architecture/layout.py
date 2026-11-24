@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""双仓布局发现：单仓 src 根与 workspace 多包根的统一源码定位。
+"""workspace 多包源码定位：内核与各插件包 src 根的统一发现。
 
-单仓布局下 ``src/workflow_controller`` 同时容纳内核、插件与 web；
-workspace 布局下内核住 ``packages/kernel/src``、各插件住
-``packages/plugins/<name>/src``、web 不在本仓。扫描记录统一归一为
-``src/...`` 虚拟路径，债务基线在两种布局下保持同键；不在本仓的源码面
-（如 web、graph 插件）按布局缺席，调用方跳过对应检查。
+内核住 ``packages/kernel/src``、各插件住 ``packages/plugins/<name>/src``。
+扫描记录统一归一为 ``src/...`` 虚拟路径，多源码根共用同一套债务基线键；
+缺席的源码面（如导出子集不含 hookserver 或特定插件）由调用方跳过对应检查。
 """
 
 from __future__ import annotations
@@ -41,9 +39,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def source_roots() -> list[Path]:
     """全部源码根（含 workflow_controller 的 src 目录），内核在前、插件按名序。"""
-    single = ROOT / "src"
-    if (single / "workflow_controller").is_dir():
-        return [single]
     kernel = ROOT / "packages" / "kernel" / "src"
     return [kernel, *sorted((ROOT / "packages" / "plugins").glob("*/src"))]
 
@@ -54,18 +49,9 @@ def kernel_package_root() -> Path:
 
 
 def plugin_package_dir(name: str) -> Path | None:
-    """按名取内置插件包目录；不在本仓的布局返回 None。"""
+    """按名取内置插件包目录；导出子集缺该插件时返回 None。"""
     for root in source_roots():
         candidate = root / "workflow_controller" / "plugins" / name
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def web_routes_root() -> Path | None:
-    """web 路由目录；web 不在本仓的布局返回 None。"""
-    for root in source_roots():
-        candidate = root / "workflow_controller" / "web" / "routes"
         if candidate.is_dir():
             return candidate
     return None
@@ -87,7 +73,7 @@ def hookserver_package_root() -> Path | None:
 
 
 def builtin_plugin_py_files() -> Iterator[Path]:
-    """全部内置插件源码文件（单仓布局在内核包内，workspace 布局在各插件包）。"""
+    """全部内置插件源码文件（各插件包内）。"""
     for root in source_roots():
         plugins_root = root / "workflow_controller" / "plugins"
         if plugins_root.is_dir():
@@ -95,7 +81,7 @@ def builtin_plugin_py_files() -> Iterator[Path]:
 
 
 def tree_roots() -> list[Path]:
-    """全部测试树根（单仓布局仅仓根 tests，workspace 布局含各包测试根）。"""
+    """全部测试树根（仓根与各包测试根）。"""
     candidates = [
         ROOT / "tests",
         ROOT / "packages" / "kernel" / "kernel_tests",
@@ -105,7 +91,7 @@ def tree_roots() -> list[Path]:
 
 
 def normalized_virtual_path(path: Path, source_root: Path) -> str:
-    """物理文件路径归一为 src/... 虚拟路径（两种布局同键）。"""
+    """物理文件路径归一为 src/... 虚拟路径（多源码根统一键）。"""
     return "src/" + path.resolve().relative_to(source_root.resolve()).as_posix()
 
 
