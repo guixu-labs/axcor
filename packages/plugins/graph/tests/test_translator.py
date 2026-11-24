@@ -26,16 +26,8 @@ import yaml
 from workflow_controller.plugins.graph import translator
 
 
-def _repo_root() -> Path:
-    """向上定位含 examples 的仓根（单仓与 workspace 插件包布局通用）。"""
-    for directory in Path(__file__).resolve().parents:
-        if (directory / "examples").is_dir():
-            return directory
-    raise FileNotFoundError("未找到含 examples 的仓根")
-
-
-ROOT = _repo_root()
-EXAMPLE_YAML = ROOT / "examples" / "graph-test" / "graph-workflow.yaml"
+SCENARIOS_DIR = Path(__file__).parent / "fixtures" / "graph-test"
+EXAMPLE_YAML = SCENARIOS_DIR / "graph-workflow.yaml"
 GOLDEN_FILE = Path(__file__).parent / "golden" / "graph_workflow_ir.json"
 
 
@@ -109,7 +101,7 @@ class TestProgramIrSnapshot:
     ):
         """源提交新增的场景 YAML 走当前 RunDriver 翻译器，而非旧 Graph API。"""
         program = translator.translate_program(
-            ROOT / "examples" / "graph-test" / filename,
+            SCENARIOS_DIR / filename,
         )
         assert program.workflow == workflow
         assert set(program.dag.all_ids()) == node_ids

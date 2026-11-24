@@ -47,9 +47,8 @@ DIST_PREFIX = "workflow-controller-plugin-"
 COPY_IGNORE = shutil.ignore_patterns(
     "__pycache__", ".pytest_cache", ".ruff_cache", "build", "dist", "*.egg-info"
 )
-# 随子集带走的根级文件（tooling 黑盒测试依赖 check_ai_words 工具与词表；
-# examples 为 graph 插件翻译测试的场景输入，一并随附；.gitignore 防快照
-# 线误收构建产物）
+# 随子集带走的根级文件（.gitignore 防快照线误收构建产物）；插件测试的场景
+# 输入内聚在各自包内（tests/fixtures），examples 不再随子集
 ROOT_FILES = (
     Path("LICENSE"),
     Path(".gitignore"),
@@ -57,7 +56,6 @@ ROOT_FILES = (
     Path("scripts/check_ai_words.py"),
     Path("scripts/ai-words.txt"),
 )
-ROOT_DIRS = (Path("examples"),)
 
 
 class ExportError(Exception):
@@ -79,8 +77,6 @@ def copy_subset(target: Path, members: list[str]) -> None:
             raise ExportError(f"成员目录不存在：{member}")
         shutil.copytree(source, target / member, ignore=COPY_IGNORE)
     shutil.copytree(ROOT / "tests", target / "tests", ignore=COPY_IGNORE)
-    for relative in ROOT_DIRS:
-        shutil.copytree(ROOT / relative, target / relative, ignore=COPY_IGNORE)
     for relative in ROOT_FILES:
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +145,7 @@ def write_readme(target: Path, selected: list[str]) -> None:
 - `workflow-controller-kernel`（内核全量，测试随包）
 - `workflow-controller-plugin-fake-driver`（headless 验收驱动，测试依赖强制随附）
 {plugin_lines}
-- 根测试基建（架构门禁与共享 support）与示例集（examples）
+- 根测试基建（架构门禁与共享 support）与词检工具（check_ai_words）
 
 ## 用法
 
