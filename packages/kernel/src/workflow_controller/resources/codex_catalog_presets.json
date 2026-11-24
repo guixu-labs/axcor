@@ -53,12 +53,28 @@
             "default_reasoning_level": "max",
             "supported_reasoning_levels": [
               {
+                "effort": "none",
+                "description": "Disable thinking"
+              },
+              {
+                "effort": "minimal",
+                "description": "Compatibility alias for disabled thinking"
+              },
+              {
                 "effort": "low",
-                "description": "Light reasoning"
+                "description": "Compatibility alias for high reasoning"
+              },
+              {
+                "effort": "medium",
+                "description": "Compatibility alias for high reasoning"
               },
               {
                 "effort": "high",
                 "description": "Enhanced reasoning"
+              },
+              {
+                "effort": "xhigh",
+                "description": "Compatibility alias for max reasoning"
               },
               {
                 "effort": "max",
