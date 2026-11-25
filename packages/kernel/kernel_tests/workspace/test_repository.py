@@ -266,18 +266,18 @@ async def test_git_output_round_trips_non_utf8_paths(tmp_path: Path) -> None:
         check=True,
     )
 
-    paths = await repository._list_index_paths(("*",))
+    paths = await getattr(repository, "_list_index_paths")(("*",))
     assert b"caf\xe9.bin" in {os.fsencode(path) for path in paths}
     decoded_path = next(path for path in paths if os.fsencode(path) == raw_path)
 
     # argv 回灌（checkout 物化同源）：按解码后的路径匹配须命中
-    listed = await repository._run_repo_git(
+    listed = await getattr(repository, "_run_repo_git")(
         ["ls-files", "-z", "--", decoded_path], work_tree=root, cwd=root
     )
     assert listed.strip("\0") == decoded_path
 
     # stdin 回灌（剥除路径同源）：force-remove 须按原始字节命中
-    await repository._run_repo_git(
+    await getattr(repository, "_run_repo_git")(
         ["update-index", "-z", "--force-remove", "--stdin"],
         work_tree=root,
         cwd=root,
