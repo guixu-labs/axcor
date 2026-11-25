@@ -47,6 +47,14 @@ def _emit_stdout(message: str) -> None:
         stream_handler.close()
 
 
+class BootExitError(Exception):
+    """headless boot 失败：携带进程退出码，由主进程入口转 SystemExit。"""
+
+    def __init__(self, exit_code: int) -> None:
+        super().__init__(f"headless boot failed, exit code {exit_code}")
+        self.exit_code = exit_code
+
+
 class HeadlessRunner:
     """Headless 模式 runner。
 
@@ -83,7 +91,7 @@ class HeadlessRunner:
             )
         except BootError as exc:
             self._emit({"event": "error", "msg": str(exc)})
-            raise SystemExit(3) from None
+            raise BootExitError(3) from None
 
         self._api.session.set_reviewer_mode("auto")
         self._emit_auth_status(self._orchestrator)

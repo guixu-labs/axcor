@@ -37,6 +37,93 @@ class ProviderInUseError(ValueError):
     """A running session still uses the provider being deleted."""
 
 
+def _provider_shift_block_ids(pool: Any, provider_index: int, provider_count: int) -> list[str]:
+    """引用被删 provider 移位区间的活跃/暂停会话 id 列表（删除拦截面）。"""
+    from workflow_controller.session.session import SessionState
+
+    active_states = {
+        SessionState.CREATING,
+        SessionState.RUNNING,
+        SessionState.PAUSED,
+        SessionState.WAITING_RETRY,
+    }
+    # Session.stop() 不清 pause_requested：先暂停再停止（含 stop-all）
+    # 会留下 state=STOPPED + pause_requested=True 的终态。硬终态必须
+    # 先排除，否则已停止会话被 pause_requested 误判为活跃，用户按
+    # 「请先停止」提示操作也无法解除 409。
+    terminal_states = {
+        SessionState.STOPPED,
+        SessionState.COMPLETED,
+        SessionState.FAILED,
+    }
+    blocked_ids: list[str] = []
+    for session in pool.list_sessions():
+        if session.state in terminal_states:
+            continue
+
+        # 真实暂停路径（Session.pause）置 state=IDLE + pause_requested=True，
+        # PAUSED 状态只在 wait_if_paused 竞态窗口短暂出现。必须按
+        # pause_requested 判定，否则暂停会话被当历史会话跳过；恢复后
+        # play() 置 RUNNING，下一次 query 用旧索引解析即热错绑。
+        if not getattr(session, "pause_requested", False) and session.state not in active_states:
+            continue
+        config = session.config
+        reviewer_index = config.reviewer.provider_index if config.reviewer is not None else None
+        # 拦截移位区间 [被删索引, provider_count)：删除低位 provider 会让
+        # 更高索引整体下移，运行中会话每轮 query 都拿旧索引解析 provider，
+        # 同索引已指向另一个 key/model（模型相同时甚至无任何告警回调）。
+        # 越界索引本就失效，不拦。
+        shifted = [
+            index
+            for index in (config.provider_index, reviewer_index)
+            if isinstance(index, int) and provider_index <= index < provider_count
+        ]
+        if shifted:
+            blocked_ids.append(session.id)
+    return blocked_ids
+
+
+def _provider_inactive_sessions(pool: Any) -> list[Any]:
+    """池内非活跃会话：硬终态，或无暂停标志的非活跃态（删除后清空绑定面）。"""
+    from workflow_controller.session.session import SessionState
+
+    terminal_states = {
+        SessionState.STOPPED,
+        SessionState.COMPLETED,
+        SessionState.FAILED,
+    }
+    active_states = {
+        SessionState.CREATING,
+        SessionState.RUNNING,
+        SessionState.PAUSED,
+        SessionState.WAITING_RETRY,
+    }
+    inactive: list[Any] = []
+    for session in pool.list_sessions():
+        if session.state in terminal_states:
+            inactive.append(session)
+            continue
+        if not getattr(session, "pause_requested", False) and session.state not in active_states:
+            inactive.append(session)
+    return inactive
+
+
+async def _clear_provider_bindings(pool: Any, sessions: list[Any]) -> None:
+    """清空所列会话的 provider 与 reviewer 绑定索引（置 None 并持久化）。"""
+    for session in sessions:
+        changed = False
+        if session.config.provider_index is not None:
+            session.config.provider_index = None
+            changed = True
+        if session.config.reviewer is not None and (
+            session.config.reviewer.provider_index is not None
+        ):
+            session.config.reviewer.provider_index = None
+            changed = True
+        if changed:
+            await pool.persist(session)
+
+
 class AuthAPI:
     """收口 key 状态、激活、验证与全局认证设置。"""
 
@@ -82,52 +169,10 @@ class AuthAPI:
             raise RuntimeError("auth rotator not available")
         if not 0 <= provider_index < rotator.get_provider_count():
             return False
-        provider_count = rotator.get_provider_count()
 
-        from workflow_controller.session.session import SessionState
-
-        active_states = {
-            SessionState.CREATING,
-            SessionState.RUNNING,
-            SessionState.PAUSED,
-            SessionState.WAITING_RETRY,
-        }
-        # Session.stop() 不清 pause_requested：先暂停再停止（含 stop-all）
-        # 会留下 state=STOPPED + pause_requested=True 的终态。硬终态必须
-        # 先排除，否则已停止会话被 pause_requested 误判为活跃，用户按
-        # 「请先停止」提示操作也无法解除 409。
-        terminal_states = {
-            SessionState.STOPPED,
-            SessionState.COMPLETED,
-            SessionState.FAILED,
-        }
-        blocked_ids: list[str] = []
-        for session in self._orch.pool.list_sessions():
-            if session.state in terminal_states:
-                continue
-
-            # 真实暂停路径（Session.pause）置 state=IDLE + pause_requested=True，
-            # PAUSED 状态只在 wait_if_paused 竞态窗口短暂出现。必须按
-            # pause_requested 判定，否则暂停会话被当历史会话跳过；恢复后
-            # play() 置 RUNNING，下一次 query 用旧索引解析即热错绑。
-            if (
-                not getattr(session, "pause_requested", False)
-                and session.state not in active_states
-            ):
-                continue
-            config = session.config
-            reviewer_index = config.reviewer.provider_index if config.reviewer is not None else None
-            # 拦截移位区间 [被删索引, provider_count)：删除低位 provider 会让
-            # 更高索引整体下移，运行中会话每轮 query 都拿旧索引解析 provider，
-            # 同索引已指向另一个 key/model（模型相同时甚至无任何告警回调）。
-            # 越界索引本就失效，不拦。
-            shifted = [
-                index
-                for index in (config.provider_index, reviewer_index)
-                if isinstance(index, int) and provider_index <= index < provider_count
-            ]
-            if shifted:
-                blocked_ids.append(session.id)
+        blocked_ids = _provider_shift_block_ids(
+            self._orch.pool, provider_index, rotator.get_provider_count()
+        )
         if blocked_ids:
             raise ProviderInUseError(
                 f"以下会话正在使用该供应商：{', '.join(blocked_ids)}。请先停止后再删除。"
@@ -138,34 +183,14 @@ class AuthAPI:
         # （stop() 不复位）不影响判定；IDLE 仅无暂停标志才算非活跃。
         # 409 阶段已保证活跃/暂停会话不引用被删项；其余会话清空绑定后，
         # 重启时走 _ensure_session_snapshots 的默认 provider 补绑。
-
-        def _is_inactive(session: Any) -> bool:
-            if session.state in terminal_states:
-                return True
-            return (
-                not getattr(session, "pause_requested", False)
-                and session.state not in active_states
-            )
-
-        inactive_sessions = [s for s in self._orch.pool.list_sessions() if _is_inactive(s)]
+        inactive_sessions = _provider_inactive_sessions(self._orch.pool)
 
         # rotator.delete_provider 内部读写 settings.conf（阻塞磁盘 I/O）。本方法
         # 被 auth_delete_key 路由 await，必须放线程池执行；直接同步调用会阻塞
         # 事件循环（SSE 流、其他会话 query、并发请求全部卡住）。
         if not await asyncio.to_thread(rotator.delete_provider, provider_index):
             return False
-        for session in inactive_sessions:
-            changed = False
-            if session.config.provider_index is not None:
-                session.config.provider_index = None
-                changed = True
-            if session.config.reviewer is not None and (
-                session.config.reviewer.provider_index is not None
-            ):
-                session.config.reviewer.provider_index = None
-                changed = True
-            if changed:
-                await self._orch.pool.persist(session)
+        await _clear_provider_bindings(self._orch.pool, inactive_sessions)
         return True
 
     def activate_provider(self, index: Any) -> dict[str, Any]:

@@ -712,19 +712,8 @@ class SingleLoopEngine:
         skip_question_detect = loop_cfg is not None and loop_cfg.question_detect is False
         if event_count <= 0 or skip_question_detect:
             return False
-        all_events = await self.event_router.get_events(session.id)
-        last_events = all_events[-10:] if len(all_events) > 10 else all_events
-        last_assistant_text = self._last_assistant_text(last_events)
-
-        # 判定逻辑（词表命中 + 问号结尾）与 reviewer 共用，词表用 loop 完整集
-        has_question = is_nl_question(last_assistant_text, markers=_LOOP_QUESTION_MARKERS)
-
-        if not has_question:
+        if not await self._detect_unanswered_question(session):
             return False
-        logger.info(
-            "SingleLoopEngine._run_iteration: detected unanswered question in %s, waiting for user input",
-            session.id,
-        )
         reviewer = session.config.reviewer
         session.waiting_for_auto_reply_fallback = (
             reviewer is not None
@@ -733,23 +722,51 @@ class SingleLoopEngine:
             and self._mode_getter() == "auto"
         )
         try:
-            await self._emit_bus_event(
-                session.id,
-                iteration,
-                EventType.LOG_LOOP,
-                {
-                    "decision": "waiting_for_input",
-                    "reason": "unanswered_question",
-                    "iteration": iteration,
-                },
-            )
             prompt_task = asyncio.create_task(session.await_manual_prompt())
-            done = await self._await_first(session, prompt_task)
+            done = await self._await_question_answer(session, iteration, prompt_task)
         finally:
             session.waiting_for_auto_reply_fallback = False
         if done is None:
             return True
-        user_input = prompt_task.result()
+        await self._inject_question_answer(session, iteration, prompt_task.result())
+        return True
+
+    async def _detect_unanswered_question(self, session: Session) -> bool:
+        """检测末条助手消息是否含未答问句（词表与问号结尾判定同 reviewer）。"""
+        all_events = await self.event_router.get_events(session.id)
+        last_events = all_events[-10:] if len(all_events) > 10 else all_events
+        last_assistant_text = self._last_assistant_text(last_events)
+
+        # 判定逻辑（词表命中 + 问号结尾）与 reviewer 共用，词表用 loop 完整集
+        has_question = is_nl_question(last_assistant_text, markers=_LOOP_QUESTION_MARKERS)
+
+        if has_question:
+            logger.info(
+                "SingleLoopEngine._run_iteration: detected unanswered question in %s, waiting for user input",
+                session.id,
+            )
+        return has_question
+
+    async def _await_question_answer(
+        self, session: Session, iteration: int, prompt_task: asyncio.Task[str]
+    ) -> list[asyncio.Task[Any]] | None:
+        """发 waiting_for_input 事件后等用户答问或既有等待面先到期。"""
+        await self._emit_bus_event(
+            session.id,
+            iteration,
+            EventType.LOG_LOOP,
+            {
+                "decision": "waiting_for_input",
+                "reason": "unanswered_question",
+                "iteration": iteration,
+            },
+        )
+        return await self._await_first(session, prompt_task)
+
+    async def _inject_question_answer(
+        self, session: Session, iteration: int, user_input: str
+    ) -> None:
+        """用户答问：发 continue 事件并把答案作为反馈注入下一轮提示。"""
         feedback = f"User answer: {user_input}"
         await self._emit_bus_event(
             session.id,
@@ -765,7 +782,6 @@ class SingleLoopEngine:
         # Continue to next iteration with user's answer as feedback
         # (feedback will be used in the next iteration's prompt rendering)
         await session.inject_prompt(feedback)
-        return True
 
     async def _run_waiting_retry(self, session: Session, iteration: int) -> bool:
         """WAITING_RETRY 窗口（loop_hold）：可中断睡眠后注入恢复提示的续跑事件。"""

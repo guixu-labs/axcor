@@ -783,27 +783,9 @@ class AuthRotator:
             existing, kind_source, fingerprint = self._entry_kind_context(
                 candidate, entry, used_existing, seen_fingerprints
             )
-            custom_name = entry["custom_name"]
-            if custom_name:
-                if custom_name in claimed_custom_names:
-                    raise ValueError(f"自定义名重复：{custom_name}")
-            else:
-                # 整池提交：已有条目优先继承旧名（旧客户端未回传时不重测不重名）；
-                # 新条目模型名未被任何自定义名占用即自动命名，否则要求手动输入。
-                # 模型是可选字段：空模型以条目序号命名，不强制手动输入。
-                inherited = (existing.custom_name or "").strip() if existing else ""
-                model_name = entry["model"].strip()
-                auto_name = model_name or f"provider-{position + 1}"
-                if inherited and inherited not in claimed_custom_names:
-                    custom_name = inherited
-                elif auto_name not in claimed_custom_names:
-                    custom_name = auto_name
-                elif model_name:
-                    raise ValueError(f"模型名 {auto_name} 已被自定义名占用，请输入自定义名")
-                else:
-                    raise ValueError(f"自动命名 {auto_name} 已被占用，请输入自定义名")
-            claimed_custom_names.add(custom_name)
-            entry["custom_name"] = custom_name
+            entry["custom_name"] = _resolve_custom_name(
+                existing, entry, position, claimed_custom_names
+            )
             if existing is not None and _existing_validations_match(existing, fingerprint):
                 result = self._validation_payload(existing, fingerprint)
             else:
@@ -818,25 +800,7 @@ class AuthRotator:
             if result.get("provider_kind") and kind_source is None:
                 # 候选验证时无 kind，结果里的 kind 是本次实测探测所得
                 kind_source = "probe"
-            if not result.get("success"):
-                error = (
-                    result["worker"].get("error")
-                    or result["reviewer"].get("error")
-                    or "no usable worker or reviewer capability"
-                )
-                if existing is None:
-                    raise ValueError(f"provider validation failed: {error}")
-                logger.warning(
-                    "existing provider %s validation failed (saved state): %s",
-                    entry["model"] or "provider",
-                    error,
-                )
-            elif result["worker"].get("status") != ValidationStatus.VALID.value:
-                logger.warning(
-                    "provider %s worker validation failed (saved reviewer-only): %s",
-                    entry["model"] or "provider",
-                    result.get("error") or "unknown error",
-                )
+            _report_validation_outcome(result, existing, entry)
             validated.append(result)
             kind_sources.append(kind_source)
             normalized.append({k: v for k, v in entry.items() if v})
@@ -2282,6 +2246,63 @@ async def _resolve_settings_entry(
         model_catalog_path,
     )
     return key, entry, candidate
+
+
+def _resolve_custom_name(
+    existing: AuthProvider | None,
+    entry: dict[str, str],
+    position: int,
+    claimed_custom_names: set[str],
+) -> str:
+    """解析条目自定义名并登记占用：重复即拒，缺省时继承旧名或自动命名。
+
+    整池提交：已有条目优先继承旧名（旧客户端未回传时不重测不重名）；
+    新条目模型名未被任何自定义名占用即自动命名，否则要求手动输入。
+    模型是可选字段：空模型以条目序号命名，不强制手动输入。
+    """
+    custom_name = entry["custom_name"]
+    if custom_name:
+        if custom_name in claimed_custom_names:
+            raise ValueError(f"自定义名重复：{custom_name}")
+    else:
+        inherited = (existing.custom_name or "").strip() if existing else ""
+        model_name = entry["model"].strip()
+        auto_name = model_name or f"provider-{position + 1}"
+        if inherited and inherited not in claimed_custom_names:
+            custom_name = inherited
+        elif auto_name not in claimed_custom_names:
+            custom_name = auto_name
+        elif model_name:
+            raise ValueError(f"模型名 {auto_name} 已被自定义名占用，请输入自定义名")
+        else:
+            raise ValueError(f"自动命名 {auto_name} 已被占用，请输入自定义名")
+    claimed_custom_names.add(custom_name)
+    return custom_name
+
+
+def _report_validation_outcome(
+    result: dict[str, Any], existing: AuthProvider | None, entry: dict[str, str]
+) -> None:
+    """校验结果处置：新条目失败即拒；已有条目保存态降级为告警日志。"""
+    if not result.get("success"):
+        error = (
+            result["worker"].get("error")
+            or result["reviewer"].get("error")
+            or "no usable worker or reviewer capability"
+        )
+        if existing is None:
+            raise ValueError(f"provider validation failed: {error}")
+        logger.warning(
+            "existing provider %s validation failed (saved state): %s",
+            entry["model"] or "provider",
+            error,
+        )
+    elif result["worker"].get("status") != ValidationStatus.VALID.value:
+        logger.warning(
+            "provider %s worker validation failed (saved reviewer-only): %s",
+            entry["model"] or "provider",
+            result.get("error") or "unknown error",
+        )
 
 
 def _existing_validations_match(existing: AuthProvider, fingerprint: str) -> bool:

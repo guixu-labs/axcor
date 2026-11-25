@@ -236,10 +236,14 @@ def test_orchestrator_reload_plugin_delegates_without_hook_server() -> None:
     """
     orch = Orchestrator.__new__(Orchestrator)
     calls: list[tuple[str, Any]] = []
-    orch._plugin_registry = SimpleNamespace(
-        reload_plugin=lambda name, o, hs: calls.append((name, hs)) or True,
+    setattr(
+        orch,
+        "_plugin_registry",
+        SimpleNamespace(
+            reload_plugin=lambda name, o, hs: calls.append((name, hs)) or True,
+        ),
     )
-    orch._hook_server = None
+    setattr(orch, "_hook_server", None)
 
     assert orch.reload_plugin("demo") is True
     assert calls == [("demo", None)]

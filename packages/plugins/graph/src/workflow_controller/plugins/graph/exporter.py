@@ -96,10 +96,9 @@ class _NodeAttempts:
         # 与前端 projectionToRunIndex 同序：快照的 running/stopped 可覆盖事件的
         # 非终态状态（暂停/停止的尝试在导出件中也显示为已停止），终态结论优先。
         active_state = status in ("running", "stopped")
-        if status is not None and (
-            fact.get("status") is None
-            or (active_state and fact.get("status") not in _TERMINAL_STATUSES)
-        ):
+        status_missing = fact.get("status") is None
+        status_overridable = active_state and fact.get("status") not in _TERMINAL_STATUSES
+        if status is not None and (status_missing or status_overridable):
             fact["status"] = status
         if fact.get("verify") is None and record.get("verify_session_id"):
             fact["verify"] = {

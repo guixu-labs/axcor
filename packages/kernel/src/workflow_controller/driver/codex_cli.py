@@ -481,27 +481,8 @@ class CodexCLIDriver(CLIDriverBase):
                 subagent_bridge = hooks.subagent_progress_bridge
                 if subagent_bridge is not None:
                     subagent_bridge.register(subagent_monitor)
-            if proc.stdin is None:
-                raise RuntimeError("codex 子进程 stdin 未创建")
-            proc.stdin.close()
-            stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
-            stderr_error_tail: deque[str] = deque(maxlen=_STDERR_ERROR_TAIL_LINES)
-            self._stderr_task = asyncio.ensure_future(
-                _drain_stderr(proc, stderr_tail, stderr_error_tail)
-            )
-
-            flags: dict[str, bool] = {"saw_error": False, "turn_completed": False}
-            async for event in self._stream_line_events(
-                proc,
-                session_id,
-                iteration,
-                flags,
-                hooks,
-                subagent_monitor,
-            ):
-                yield event
-            async for event in self._proc_exit_events(
-                proc, stderr_tail, stderr_error_tail, flags, session_id, iteration
+            async for event in self._stream_proc_events(
+                proc, session_id, iteration, hooks, subagent_monitor
             ):
                 yield event
         except asyncio.CancelledError:
@@ -528,6 +509,39 @@ class CodexCLIDriver(CLIDriverBase):
             if subagent_bridge is not None:
                 subagent_bridge.unregister(subagent_monitor)
             await self._teardown_proc(proc)
+
+    async def _stream_proc_events(
+        self,
+        proc: asyncio.subprocess.Process,
+        session_id: str,
+        iteration: int,
+        hooks: DriverHooks | None,
+        subagent_monitor: Any | None,
+    ) -> AsyncIterator[Event]:
+        """关闭 stdin、起 stderr 抽取任务，驱动 stdout 事件流至进程退出收尾。"""
+        if proc.stdin is None:
+            raise RuntimeError("codex 子进程 stdin 未创建")
+        proc.stdin.close()
+        stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+        stderr_error_tail: deque[str] = deque(maxlen=_STDERR_ERROR_TAIL_LINES)
+        self._stderr_task = asyncio.ensure_future(
+            _drain_stderr(proc, stderr_tail, stderr_error_tail)
+        )
+
+        flags: dict[str, bool] = {"saw_error": False, "turn_completed": False}
+        async for event in self._stream_line_events(
+            proc,
+            session_id,
+            iteration,
+            flags,
+            hooks,
+            subagent_monitor,
+        ):
+            yield event
+        async for event in self._proc_exit_events(
+            proc, stderr_tail, stderr_error_tail, flags, session_id, iteration
+        ):
+            yield event
 
     async def _stream_line_events(
         self,

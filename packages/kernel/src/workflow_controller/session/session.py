@@ -243,6 +243,11 @@ class Session:
         """最近一次 per-stage review 审完的阶段索引（-1 = 未审过）。"""
         return self._last_reviewed_stage_index
 
+    @property
+    def driver_hooks(self) -> DriverHooks | None:
+        """当前会话的 driver hook 组装。"""
+        return self._driver_hooks
+
     def set_state_change_hook(
         self,
         hook: Callable[[str, SessionState, SessionState], None] | None,
@@ -268,11 +273,6 @@ class Session:
 
     def set_driver_hooks(self, hooks: DriverHooks) -> None:
         self._driver_hooks = hooks
-
-    @property
-    def driver_hooks(self) -> DriverHooks | None:
-        """当前会话的 driver hook 组装。"""
-        return self._driver_hooks
 
     def set_provider_change_callback(
         self,

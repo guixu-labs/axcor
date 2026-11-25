@@ -402,64 +402,6 @@ class PluginRegistry:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def _inherit_legacy_config(
-        self, name: str, user_path: Path, plugin_cls: type[Plugin]
-    ) -> dict[str, Any]:
-        """旧布局配置一次性迁移：把本地 plugins/<name>/config.yaml 的启停与
-        自定义字段固化到用户配置文件，旧文件后续清理不丢配置。
-
-        插件包随发行安装后，plugins/<name>/ 即插件类所在包目录，其
-        config.yaml 是包内默认而非用户旧配置，不作为迁移源（否则默认值
-        会被固化成用户覆盖，升级后的新默认不再生效）。
-        """
-        legacy_file = self._plugins_dir / name / "config.yaml"
-        if not legacy_file.is_file():
-            return {}
-        package_dir = self._plugin_package_dir(plugin_cls)
-        if package_dir is not None and package_dir == legacy_file.resolve().parent:
-            return {}
-        legacy_data = self._read_yaml_dict(legacy_file)
-        payload = {k: v for k, v in legacy_data.items() if k not in ("name", "version")}
-        if payload:
-            try:
-                user_path.parent.mkdir(parents=True, exist_ok=True)
-                user_path.write_text(
-                    yaml.dump(
-                        payload, default_flow_style=False, sort_keys=False, allow_unicode=True
-                    ),
-                    encoding="utf-8",
-                )
-            except OSError:
-                logger.warning("failed to persist inherited config of %s", name, exc_info=True)
-        return payload
-
-    def _entry_point_config(
-        self, ep: importlib.metadata.EntryPoint, plugin_cls: type[Plugin]
-    ) -> tuple[PluginConfig, Path]:
-        """入口点插件配置：包内默认合并用户覆盖，返回 (配置, 用户配置文件路径)。
-
-        版本取入口点所属 distribution；包内未携带 config.yaml 时默认停用
-        （与本地目录插件缺配置一致）；用户覆盖缺失时先做旧配置迁移。
-        """
-        version = str(getattr(getattr(ep, "dist", None), "version", "") or "0.0.0")
-        merged = dict(self._package_config_defaults(plugin_cls))
-        user_path = self.user_config_dir / ep.name / "config.yaml"
-        if user_path.is_file():
-            override = self._read_yaml_dict(user_path)
-        else:
-            override = self._inherit_legacy_config(ep.name, user_path, plugin_cls)
-        merged.update(override)
-        extra = {k: v for k, v in merged.items() if k not in ("name", "version", "enabled")}
-        return (
-            PluginConfig(
-                name=ep.name,
-                version=version,
-                enabled=bool(merged.get("enabled", False)),
-                extra=extra or None,
-            ),
-            user_path,
-        )
-
     @staticmethod
     def _load_entry_point_class(ep: importlib.metadata.EntryPoint) -> type[Plugin] | None:
         try:
@@ -584,38 +526,13 @@ class PluginRegistry:
         return merged
 
     def discover(self) -> list[tuple[PluginConfig, Path | None, type[Plugin]]]:
-        found: list[tuple[PluginConfig, Path | None, type[Plugin]]] = []
-        local_names: set[str] = set()
         # 只枚举一次入口点：本地扫描的 shadow 判断与下方装载循环必须看到
         # 同一份清单，两次独立枚举在安装元数据变动间隙可能不一致。
         eps = self._entry_points()
         ep_by_name: dict[str, importlib.metadata.EntryPoint] = {}
         for ep in eps:
             ep_by_name.setdefault(ep.name, ep)
-        if self._plugins_dir.is_dir():
-            for sub in sorted(self._plugins_dir.iterdir()):
-                if not sub.is_dir() or sub.name.startswith("_") or sub.name.startswith("."):
-                    continue
-                plugin_file = sub / "plugin.py"
-                if not plugin_file.is_file():
-                    continue
-                config_file = sub / "config.yaml"
-                cfg = self._load_config(config_file)
-                # 插件发行包把各插件装进共享的 plugins 命名空间目录，本地扫描
-                # 会撞见入口点装进来的同一实现；此时走入口点通道发现，保留
-                # 包内默认与用户覆盖合并语义，仅真正的开发期本地副本才覆盖。
-                shadow_ep = ep_by_name.get(cfg.name)
-                if shadow_ep is not None:
-                    shadow_cls = self._load_entry_point_class(shadow_ep)
-                    shadow_dir = (
-                        self._plugin_package_dir(shadow_cls) if shadow_cls is not None else None
-                    )
-                    if shadow_dir is not None and shadow_dir == sub.resolve():
-                        continue
-                plugin_cls = self._load_plugin_class(plugin_file, sub)
-                if plugin_cls is not None:
-                    found.append((cfg, config_file, plugin_cls))
-                    local_names.add(cfg.name)
+        found, local_names = self._discover_local_plugins(ep_by_name)
 
         ep_names: set[str] = set()
         for ep in eps:
@@ -691,3 +608,99 @@ class PluginRegistry:
             except Exception:
                 logger.exception("plugin %s failed to uninstall", p.config.name)
         self._plugins.clear()
+
+    def _inherit_legacy_config(
+        self, name: str, user_path: Path, plugin_cls: type[Plugin]
+    ) -> dict[str, Any]:
+        """旧布局配置一次性迁移：把本地 plugins/<name>/config.yaml 的启停与
+        自定义字段固化到用户配置文件，旧文件后续清理不丢配置。
+
+        插件包随发行安装后，plugins/<name>/ 即插件类所在包目录，其
+        config.yaml 是包内默认而非用户旧配置，不作为迁移源（否则默认值
+        会被固化成用户覆盖，升级后的新默认不再生效）。
+        """
+        legacy_file = self._plugins_dir / name / "config.yaml"
+        if not legacy_file.is_file():
+            return {}
+        package_dir = self._plugin_package_dir(plugin_cls)
+        if package_dir is not None and package_dir == legacy_file.resolve().parent:
+            return {}
+        legacy_data = self._read_yaml_dict(legacy_file)
+        payload = {k: v for k, v in legacy_data.items() if k not in ("name", "version")}
+        if payload:
+            try:
+                user_path.parent.mkdir(parents=True, exist_ok=True)
+                user_path.write_text(
+                    yaml.dump(
+                        payload, default_flow_style=False, sort_keys=False, allow_unicode=True
+                    ),
+                    encoding="utf-8",
+                )
+            except OSError:
+                logger.warning("failed to persist inherited config of %s", name, exc_info=True)
+        return payload
+
+    def _entry_point_config(
+        self, ep: importlib.metadata.EntryPoint, plugin_cls: type[Plugin]
+    ) -> tuple[PluginConfig, Path]:
+        """入口点插件配置：包内默认合并用户覆盖，返回 (配置, 用户配置文件路径)。
+
+        版本取入口点所属 distribution；包内未携带 config.yaml 时默认停用
+        （与本地目录插件缺配置一致）；用户覆盖缺失时先做旧配置迁移。
+        """
+        version = str(getattr(getattr(ep, "dist", None), "version", "") or "0.0.0")
+        merged = dict(self._package_config_defaults(plugin_cls))
+        user_path = self.user_config_dir / ep.name / "config.yaml"
+        if user_path.is_file():
+            override = self._read_yaml_dict(user_path)
+        else:
+            override = self._inherit_legacy_config(ep.name, user_path, plugin_cls)
+        merged.update(override)
+        extra = {k: v for k, v in merged.items() if k not in ("name", "version", "enabled")}
+        return (
+            PluginConfig(
+                name=ep.name,
+                version=version,
+                enabled=bool(merged.get("enabled", False)),
+                extra=extra or None,
+            ),
+            user_path,
+        )
+
+    def _discover_local_plugins(
+        self, ep_by_name: dict[str, importlib.metadata.EntryPoint]
+    ) -> tuple[list[tuple[PluginConfig, Path | None, type[Plugin]]], set[str]]:
+        """扫描本地 plugins/ 目录；入口点安装包本体目录跳过（走入口点通道）。"""
+        found: list[tuple[PluginConfig, Path | None, type[Plugin]]] = []
+        local_names: set[str] = set()
+        if not self._plugins_dir.is_dir():
+            return found, local_names
+        for sub in sorted(self._plugins_dir.iterdir()):
+            if not sub.is_dir() or sub.name.startswith("_") or sub.name.startswith("."):
+                continue
+            plugin_file = sub / "plugin.py"
+            if not plugin_file.is_file():
+                continue
+            config_file = sub / "config.yaml"
+            cfg = self._load_config(config_file)
+            # 插件发行包把各插件装进共享的 plugins 命名空间目录，本地扫描
+            # 会撞见入口点装进来的同一实现；此时走入口点通道发现，保留
+            # 包内默认与用户覆盖合并语义，仅真正的开发期本地副本才覆盖。
+            if self._is_entry_point_shadow(ep_by_name, cfg.name, sub):
+                continue
+            plugin_cls = self._load_plugin_class(plugin_file, sub)
+            if plugin_cls is not None:
+                found.append((cfg, config_file, plugin_cls))
+                local_names.add(cfg.name)
+        return found, local_names
+
+    def _is_entry_point_shadow(
+        self, ep_by_name: dict[str, importlib.metadata.EntryPoint], name: str, sub: Path
+    ) -> bool:
+        """本地目录是入口点插件的包目录本体时视为 shadow（不重复发现）。"""
+        shadow_ep = ep_by_name.get(name)
+        if shadow_ep is None:
+            return False
+        shadow_cls = self._load_entry_point_class(shadow_ep)
+        shadow_dir = self._plugin_package_dir(shadow_cls) if shadow_cls is not None else None
+        return shadow_dir is not None and shadow_dir == sub.resolve()

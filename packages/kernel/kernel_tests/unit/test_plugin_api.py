@@ -131,13 +131,12 @@ def test_write_config_coerces_form_strings_to_original_types(tmp_path: Path) -> 
     assert data["name"] == "demo"
 
 
-def test_write_config_coerces_with_effective_type_hints_for_entry_point_plugin(
-    tmp_path: Path,
-) -> None:
-    """入口点插件的覆盖文件只存增量：缺键的类型从发现面有效配置取。"""
+def _entry_point_orch(tmp_path: Path, *, write_enabled: bool) -> tuple[Path, SimpleNamespace]:
+    """入口点插件发现面桩：用户覆盖路径 + 最小 orch（discover/reload/plugins_dir）。"""
     cfg_path = tmp_path / "user-config" / "demo" / "config.yaml"
-    cfg_path.parent.mkdir(parents=True)
-    cfg_path.write_text("enabled: true\n", encoding="utf-8")
+    if write_enabled:
+        cfg_path.parent.mkdir(parents=True)
+        cfg_path.write_text("enabled: true\n", encoding="utf-8")
     discovered = [
         (
             PluginConfig(name="demo", version="0.1.0", enabled=True, extra={"retries": 3}),
@@ -151,6 +150,14 @@ def test_write_config_coerces_with_effective_type_hints_for_entry_point_plugin(
         reload_plugin=lambda name: None,
         plugins_dir=tmp_path,
     )
+    return cfg_path, orch
+
+
+def test_write_config_coerces_with_effective_type_hints_for_entry_point_plugin(
+    tmp_path: Path,
+) -> None:
+    """入口点插件的覆盖文件只存增量：缺键的类型从发现面有效配置取。"""
+    cfg_path, orch = _entry_point_orch(tmp_path, write_enabled=True)
 
     result = PluginAPI(orch).write_config("demo", {"retries": "5"}, None)
 
@@ -163,20 +170,7 @@ def test_write_config_coerces_with_effective_type_hints_for_entry_point_plugin(
 
 def test_write_config_without_enabled_key_returns_effective_state(tmp_path: Path) -> None:
     """覆盖文件尚无 enabled 键时，返回值取发现面有效态而非误报停用。"""
-    cfg_path = tmp_path / "user-config" / "demo" / "config.yaml"
-    discovered = [
-        (
-            PluginConfig(name="demo", version="0.1.0", enabled=True, extra={"retries": 3}),
-            cfg_path,
-            None,
-        )
-    ]
-    orch = SimpleNamespace(
-        discover_plugins=lambda: discovered,
-        plugins=[],
-        reload_plugin=lambda name: None,
-        plugins_dir=tmp_path,
-    )
+    cfg_path, orch = _entry_point_orch(tmp_path, write_enabled=False)
 
     result = PluginAPI(orch).write_config("demo", {"retries": "5"}, None)
 
@@ -254,7 +248,8 @@ def test_list_plugins_attaches_run_panels_for_loaded_plugin(tmp_path: Path) -> N
 
         config = SimpleNamespace(name="demo")
 
-        def get_web_router(self):
+        @staticmethod
+        def get_web_router():
             return None
 
         @staticmethod
@@ -270,13 +265,8 @@ def test_list_plugins_attaches_run_panels_for_loaded_plugin(tmp_path: Path) -> N
     config_path = _write_plugin_config(tmp_path, "name: demo\nversion: 0.1.0\nenabled: true\n")
     plugin = _PanelPlugin()
 
-    entry = next(
-        e
-        for e in PluginAPI(
-            _orch(config_path, plugins=[plugin], plugins_dir=tmp_path)
-        ).list_plugins()
-        if e["name"] == "demo"
-    )
+    api = PluginAPI(_orch(config_path, plugins=[plugin], plugins_dir=tmp_path))
+    entry = next(e for e in api.list_plugins() if e["name"] == "demo")
     assert entry["run_panels"] == [
         {
             "format": "graph-yaml@1",

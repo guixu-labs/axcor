@@ -1771,6 +1771,21 @@ def _stopped_control():
     return ControlNotification(kind=ControlKind.STOPPED)
 
 
+def _driver_with_failed_bash_pair(tmp_path: Path) -> GraphDriver:
+    """a(bash 失败)→b 两节点 driver，推进到失败传播后（续跑类用例的公共前置）。"""
+    driver = build_driver(
+        tmp_path,
+        [
+            {"id": "a", "task_type": "bash", "command": "x", "acceptance": {"enabled": False}},
+            bash_node("b", "true", depends_on=["a"], acceptance={"enabled": False}),
+        ],
+    )
+    decide(driver)
+    decide(driver, [ProcessExit(proc_id="p1", context="node=a", returncode=1)])
+    decide(driver)  # 传播轮（b 标 skipped）
+    return driver
+
+
 class TestGroupControlReaction:
     @staticmethod
     def test_pause_freezes_scheduling_and_marks_paused(tmp_path):
@@ -1805,16 +1820,7 @@ class TestGroupControlReaction:
 
     @staticmethod
     def test_resume_resets_failed_and_bash_stopped_to_pending(tmp_path):
-        driver = build_driver(
-            tmp_path,
-            [
-                {"id": "a", "task_type": "bash", "command": "x", "acceptance": {"enabled": False}},
-                bash_node("b", "true", depends_on=["a"], acceptance={"enabled": False}),
-            ],
-        )
-        decide(driver)
-        decide(driver, [ProcessExit(proc_id="p1", context="node=a", returncode=1)])
-        decide(driver)  # 传播轮（b 标 skipped）
+        driver = _driver_with_failed_bash_pair(tmp_path)
         driver.on_control(_paused_control())
         driver.on_control(_resumed_control())
         actions = decide(driver)
@@ -1826,16 +1832,7 @@ class TestGroupControlReaction:
     @staticmethod
     def test_resume_resets_retry_budget_not_just_attempts(tmp_path):
         """续跑重置重试预算：上一轮耗尽的重试次数不继承到新一轮（attempts 仍保留）。"""
-        driver = build_driver(
-            tmp_path,
-            [
-                {"id": "a", "task_type": "bash", "command": "x", "acceptance": {"enabled": False}},
-                bash_node("b", "true", depends_on=["a"], acceptance={"enabled": False}),
-            ],
-        )
-        decide(driver)
-        decide(driver, [ProcessExit(proc_id="p1", context="node=a", returncode=1)])
-        decide(driver)  # 传播轮（b 标 skipped）
+        driver = _driver_with_failed_bash_pair(tmp_path)
         driver.state.increment_retries("a")  # 模拟上一轮已耗尽重试预算
         assert driver.state.retries("a") == 1
         driver.on_control(_paused_control())
