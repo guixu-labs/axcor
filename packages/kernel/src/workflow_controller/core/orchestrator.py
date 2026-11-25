@@ -334,8 +334,16 @@ class Orchestrator:
                     Path(self.config.project_dir),
                 )
             except Exception as exc:
-                host, port = self._hook_server.host, self._hook_server.port
+                hook_server = self._hook_server
+                host, port = hook_server.host, hook_server.port
                 self._hook_server = None
+                try:
+                    await hook_server.stop_server()
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "Hook Server cleanup failed during startup rollback: %s",
+                        cleanup_exc,
+                    )
                 self._plugin_registry.unload_all()
                 await self.bus.stop()
                 message = (

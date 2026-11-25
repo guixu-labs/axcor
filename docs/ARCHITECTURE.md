@@ -138,6 +138,7 @@ CREATING → IDLE → RUNNING            COMPLETED/STOPPED/FAILED
 
 - **SessionAPI.start(project_dir)**：`generate_hook_config` → 读 `workspace.json` 判断是否同项目 → 写 `workspace.json`（记录 project_dir；事件与列表恒守护进程库，换项目不清空）→ 优先用该目录的 `workflow-controller.yaml`（无则全局 config）构造 worker `SessionConfig`（`loop`/`runtime`/`system_prompt`/`starting_prompt` 等取自 yaml）→ `start_session_with_config`
 - **Claude CLI hook 前置**：默认 runtime 为 `claude_cli` 时，controller 启动 Hook Server 后即按当前 endpoint 刷新项目 `.claude/settings.json`；激活任意 `claude_cli` session 前再次刷新目标 cwd 的 hooks，并要求 Hook Server 已在役。刷新失败或 Hook Server 缺失时 activation fail-fast，防止旧 session 继续访问已漂移的历史端口。
+- **Hook 启动事务回滚**：Hook Server 绑定成功后的任何启动步骤失败（如 Claude hooks 写入失败）都必须先停止已绑定的 Hook Server，再卸载插件并停事件总线；不能只丢弃对象引用，留下仍监听端口的 TCPSite。
 - **SessionAPI.delete()**：统一执行 `stop_session → pool.remove → bus.emit(session_delete) → event_router.delete_session`；Web DELETE 路由只做参数校验和 HTTP 错误映射，不另行实现删除链路
 - **SessionAPI.inject_prompt()**：`pool.inject_prompt()` + `event_store.store(LOG_MANUAL)`
 - **发送人工消息**：直连 session 由 SessionAPI 单请求完成「恢复池外历史对象 → 注入并留痕 → 若可续跑则恢复」；workflow 成员只经 RunCoordinator 的成员操作面完成同一请求内的顺序操作，由它检查 run 状态与成员资格，再调用 Session Orchestrator 原语。前端不能拆成 inject、resume 两次请求，避免两次请求之间成员出池或状态变化而丢失输入。

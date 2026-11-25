@@ -86,6 +86,45 @@ class TestOrchestrator:
         assert not orchestrator.hook_server_active
         assert not orchestrator.plugin_registry.plugins
 
+    async def test_hook_refresh_failure_stops_started_hook_server(
+        self,
+        monkeypatch,
+        orchestrator,
+    ):
+        from workflow_controller.hooks.server import HookServer, HookServerStartupError
+
+        cleanup_order: list[str] = []
+
+        async def start_hook_server(_hook_server: HookServer) -> None:
+            cleanup_order.append("start")
+
+        async def stop_hook_server(_hook_server: HookServer) -> None:
+            cleanup_order.append("stop")
+
+        def fail_hook_refresh(_project_dir: object) -> None:
+            raise ValueError("settings write failed")
+
+        monkeypatch.setattr(HookServer, "start", start_hook_server)
+        monkeypatch.setattr(HookServer, "stop_server", stop_hook_server)
+        monkeypatch.setattr(orchestrator, "generate_hook_config", fail_hook_refresh)
+        monkeypatch.setattr(orchestrator, "_maybe_start_reviewer", AsyncMock())
+        orchestrator.config.runtime = "claude_cli"
+        orchestrator.config.hook_server = HookServerConfig(
+            enabled=True,
+            host="127.0.0.1",
+            port=18999,
+        )
+
+        with pytest.raises(
+            HookServerStartupError,
+            match=r"Hook Server.*18999.*settings write failed",
+        ):
+            await orchestrator.start()
+
+        assert cleanup_order == ["start", "stop"]
+        assert not orchestrator.hook_server_active
+        assert not orchestrator.plugin_registry.plugins
+
     async def test_boot_refreshes_claude_cli_hooks(self, monkeypatch, orchestrator, tmp_path):
         from workflow_controller.hooks.server import HookServer
 
