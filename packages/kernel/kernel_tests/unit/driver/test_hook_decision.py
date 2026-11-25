@@ -198,6 +198,23 @@ class TestRenderStopPrompt:
         assert "block_with_feedback" in out
 
     @staticmethod
+    def test_required_items_blocked_by_external_dependencies_cannot_exit() -> None:
+        """Keep the external-blocker rule in the production stop prompt."""
+        prompt = render_stop_prompt(
+            context="本轮已做完产物，整个任务要求的设备验收仍待设备释放。",
+            task_goal="产物落盘并通过设备验收",
+            sandbox_root="/tmp",
+        )
+
+        release, blocking = prompt.split("2. **block_with_feedback 的常见情境**:", 1)
+        rule = "必需项因外部依赖未就绪而未完成时,必须返回 block_with_feedback"
+        assert "会话任务目标下的全部必需项已完成" in release
+        assert "本轮任务的全部必需项已完成" not in release
+        assert rule not in release
+        assert rule in blocking
+        assert "已做完能做的, 剩下卡外部" not in prompt
+
+    @staticmethod
     def test_empty_task_goal_omits_goal_block() -> None:
         out = render_stop_prompt(
             context="x",

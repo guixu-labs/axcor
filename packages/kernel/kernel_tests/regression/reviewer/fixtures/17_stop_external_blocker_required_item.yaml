@@ -1,0 +1,20 @@
+name: stop_external_blocker_required_item
+kind: stop_hook
+
+description: |
+  Issue #14 回归。交付文件已落盘，本轮可以完成的工作已经做完，必需的设备验收仍受外部占用阻塞。
+  Reviewer 应保留设备验收未完成的事实并要求阻断退出。
+
+task_goal: 交付验证规约，并在设备上实际完成 G2 门禁验证。
+worker_context: |
+  验证规约 `artifacts/validation-contract.md` 已落盘并检查完整。
+  本轮其他可做项均已完成。G2 门禁验证仍未执行，设备被外部任务占用，本会话无法释放设备。
+  恢复路径是设备释放后运行完整 G2 门禁，并记录结果。当前没有其他可推进项。
+
+staged_disk:
+  - artifacts/validation-contract.md
+
+expected:
+  action: block_with_feedback
+  feedback_must_include:
+    - G2
