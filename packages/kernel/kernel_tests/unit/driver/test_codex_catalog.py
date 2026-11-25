@@ -59,6 +59,40 @@ def test_installs_matching_preset(tmp_path: Path, monkeypatch) -> None:
     assert catalog["models"][0]["slug"] == "glm-5.3"
 
 
+def test_installs_glm_5_2_preset(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        codex_catalog,
+        "_bundled_model_slugs",
+        lambda: frozenset(),
+    )
+
+    result = codex_catalog.resolve_codex_catalog(
+        model="glm-5.2",
+        config_dir=tmp_path,
+    )
+
+    assert result.status == "preset"
+    catalog = json.loads(result.model_catalog_path.read_text(encoding="utf-8"))
+    models = {model["slug"]: model for model in catalog["models"]}
+    assert set(models) == {"glm-5.3", "glm-5.2"}
+    assert [level["effort"] for level in models["glm-5.3"]["supported_reasoning_levels"]] == [
+        "low",
+        "high",
+        "max",
+    ]
+    assert models["glm-5.2"]["context_window"] == 1048576
+    assert models["glm-5.2"]["default_reasoning_level"] == "max"
+    assert [level["effort"] for level in models["glm-5.2"]["supported_reasoning_levels"]] == [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+
+
 def test_unknown_third_party_requires_custom_catalog(
     tmp_path: Path,
     monkeypatch,

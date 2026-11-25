@@ -47,6 +47,7 @@ class GlobalSettings:
       - model: str (optional, falls back to default_model)
       - base_url: str (optional, falls back to default_url)
       - runtime: str (optional, e.g. "opencode" — prefix-stripping rule for probes)
+      - custom_name: str (optional, globally unique display name; backfilled on load)
       - model_catalog_path: str (optional provider metadata; effective runtime decides usage)
       - provider_kind: str (optional, opencode 的 ai-sdk 包名；仅显式配置——探测值只存 auth_state.json)
     """
@@ -124,6 +125,8 @@ def _normalize_key_entry(item: dict[str, Any]) -> dict[str, str] | None:
         entry["base_url"] = str(item["base_url"]).strip()
     if item.get("runtime"):
         entry["runtime"] = str(item["runtime"]).strip()
+    if item.get("custom_name"):
+        entry["custom_name"] = str(item["custom_name"]).strip()
     if item.get("model_catalog_path"):
         entry["model_catalog_path"] = str(item["model_catalog_path"]).strip()
     # provider_kind（opencode 协议包）必须随条目保留：conf 里的

@@ -322,16 +322,29 @@ async def test_codex_worker_probe_waits_for_iteration_end(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["glm-5.3", "glm-5.2"])
 async def test_codex_preset_catalog_is_installed_and_injected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     captured = _codex_preset_probe_env(monkeypatch)
+
+    async def fake_reviewer_request(self, prompt: str, **kwargs) -> HttpResult:
+        """Return a successful reviewer probe without network access."""
+
+        return HttpResult(text="OK", is_error=False, error="")
+
+    monkeypatch.setattr(
+        AnthropicHttpClient,
+        "request",
+        fake_reviewer_request,
+    )
     rotator = _rotator(tmp_path)
 
     result = await rotator.validate_candidate(
         "sk",
-        "glm-5.3",
+        model,
         "https://open.bigmodel.cn/api/v1",
         "codex_cli",
         force=True,
@@ -995,6 +1008,148 @@ async def test_set_keys_reuses_validations_after_provider_reordering(
 
     assert calls == {"worker": 2, "reviewer": 8}
     assert [provider.key for provider in rotator.get_providers()] == ["sk-2", "sk-1"]
+
+
+def test_custom_names_backfill_on_load(tmp_path: Path) -> None:
+    """存量无自定义名加载时确定性回填：模型名优先，冲突取 backup 序号。"""
+    from workflow_controller.core.auth_rotator.settings import GlobalSettings
+
+    GlobalSettings(
+        api_keys=[
+            {
+                "key": "sk-1",
+                "model": "glm",
+                "base_url": "https://a.test/v1",
+                "runtime": "claude_sdk",
+            },
+            {
+                "key": "sk-2",
+                "model": "glm",
+                "base_url": "https://b.test/v1",
+                "runtime": "codex_cli",
+            },
+            {
+                "key": "sk-3",
+                "model": "glm",
+                "base_url": "https://c.test/v1",
+                "runtime": "claude_sdk",
+            },
+            {
+                "key": "sk-4",
+                "model": "sonnet",
+                "base_url": "https://d.test/v1",
+                "runtime": "claude_sdk",
+            },
+        ]
+    ).save(tmp_path / "settings.conf")
+
+    rotator = _rotator(tmp_path)
+
+    expected = ["glm", "glm-backup-2", "glm-backup-3", "sonnet"]
+    assert [provider.custom_name for provider in rotator.get_providers()] == expected
+    status = rotator.get_key_status_dict()
+    assert [provider["custom_name"] for provider in status["providers"]] == expected
+    assert [key["custom_name"] for key in rotator.get_api_keys_for_ui()] == expected
+    settings = rotator.get_global_settings_dict()
+    assert [key["custom_name"] for key in settings["api_keys"]] == expected
+
+    state = json.loads((tmp_path / "auth_state.json").read_text(encoding="utf-8"))
+    assert [provider["custom_name"] for provider in state["providers"]] == expected
+    reloaded = _rotator(tmp_path)
+    assert [provider.custom_name for provider in reloaded.get_providers()] == expected
+    saved_entries = GlobalSettings.load(tmp_path / "settings.conf").api_keys
+    assert all("custom_name" not in entry for entry in saved_entries)
+
+
+def test_global_settings_custom_name_fallback_keeps_provider_indexes(
+    tmp_path: Path,
+) -> None:
+    """全局设置回退取 provider 名时按有效 key 条目对齐 provider 序号。"""
+    from workflow_controller.core.auth_rotator.settings import GlobalSettings
+
+    GlobalSettings(
+        api_keys=[
+            {
+                "key": "sk-1",
+                "model": "one",
+                "base_url": "https://a.test/v1",
+                "runtime": "claude_sdk",
+                "custom_name": "a",
+            },
+            {
+                "key": "sk-2",
+                "model": "two",
+                "base_url": "https://b.test/v1",
+                "runtime": "codex_cli",
+            },
+        ]
+    ).save(tmp_path / "settings.conf")
+
+    settings = _rotator(tmp_path).get_global_settings_dict()
+    assert [entry["custom_name"] for entry in settings["api_keys"]] == ["a", "two"]
+
+
+@pytest.mark.asyncio
+async def test_set_keys_auto_custom_name_and_manual_requirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """保存时模型名未被占用即自动命名；被占用要求手动输入且全局唯一。"""
+    from workflow_controller.core.auth_rotator.settings import GlobalSettings
+
+    _counting_probe_env(monkeypatch)
+    rotator = _rotator(tmp_path)
+    first = {
+        "key": "sk-1",
+        "model": "glm",
+        "base_url": "https://a.test/v1",
+        "runtime": "claude_sdk",
+    }
+    second = {
+        "key": "sk-2",
+        "model": "glm",
+        "base_url": "https://b.test/v1",
+        "runtime": "claude_cli",
+    }
+
+    await rotator.set_keys_validated([first])
+    assert rotator.get_provider(0).custom_name == "glm"
+    assert GlobalSettings.load(tmp_path / "settings.conf").api_keys[0]["custom_name"] == "glm"
+
+    with pytest.raises(ValueError, match="请输入自定义名"):
+        await rotator.set_keys_validated([first, second])
+
+    second["custom_name"] = "glm-cli"
+    await rotator.set_keys_validated([first, second])
+    assert [provider.custom_name for provider in rotator.get_providers()] == ["glm", "glm-cli"]
+
+    duplicate = {**second, "key": "sk-3", "custom_name": "glm"}
+    with pytest.raises(ValueError, match="自定义名重复"):
+        await rotator.set_keys_validated([first, second, duplicate])
+
+
+@pytest.mark.asyncio
+async def test_set_keys_empty_model_conflict_names_automatic_provider_name(
+    tmp_path: Path,
+) -> None:
+    """空模型自动名冲突时提示自动命名，避免误称模型名。"""
+    rotator = _rotator(tmp_path)
+    named = {
+        "key": "sk-1",
+        "model": "glm",
+        "base_url": "https://a.test/v1",
+        "runtime": "claude_sdk",
+        "custom_name": "provider-2",
+    }
+    blank_model = {
+        "key": "sk-2",
+        "model": "",
+        "base_url": "https://b.test/v1",
+        "runtime": "claude_cli",
+    }
+
+    with pytest.raises(ValueError, match="自动命名 provider-2 已被占用"):
+        await rotator.set_keys_validated([named, blank_model])
 
 
 @pytest.mark.asyncio

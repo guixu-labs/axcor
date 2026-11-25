@@ -457,21 +457,22 @@ class TestPauseResume:
 
     async def test_pause_drains_inflight_birth_late_session_caught(self, tmp_path):
         """受理时出生在途——排空后才逐成员暂停，迟到成员不逃逸。"""
-        h = GroupHarness(tmp_path, FakeFactory("fake@1", OneShotDriver("late")))
-        h.so.birth_gates["late"] = asyncio.Event()
+        # 名字带 slow 防替身自动收口：成员须活到组暂停扫掠，用例才有判定意义
+        h = GroupHarness(tmp_path, FakeFactory("fake@1", OneShotDriver("late-slow")))
+        h.so.birth_gates["late-slow"] = asyncio.Event()
         run_id = await h.start()
         rt = getattr(h.coord, "_runtimes")[run_id]
         await h.eventually(lambda: rt.in_flight == 1)
 
         async def _release() -> None:
             await asyncio.sleep(0.05)
-            h.so.birth_gates["late"].set()
+            h.so.birth_gates["late-slow"].set()
 
         releaser = asyncio.get_running_loop().create_task(_release())
         record = await h.coord.pause_run(run_id)
         await releaser
         assert record.status == "paused"
-        assert h.so.paused == [h.session_by_name("late").id]
+        assert h.so.paused == [h.session_by_name("late-slow").id]
         assert (await h.store.list_run_sessions(run_id))[0].paused_by == "run"
 
     async def test_batch_start_frozen_by_pause_pumped_after_resume(self, tmp_path):
@@ -681,7 +682,11 @@ class TestPauseResume:
         assert h.so.paused == []  # 序列未走到成员暂停
 
     async def test_driver_pause_resume_clears_unsuspended_accounting(self, tmp_path):
-        """驱动路组暂停账在恢复时全量清：未挂起成员（在跑/已终态）仅清账、不代 resume。"""
+        """驱动路组暂停账在恢复时全量清：未挂起的在跑成员仅清账、不代 resume。
+
+        成员用慢速名（不自终结）：暂停记账写在与成员终态之间是时序敏感的，
+        自终结成员会让记账窗口收窄成竞态。
+        """
 
         class SelfPauseDriver(RecordingDriver):
             def decide(self, world, notifications):
@@ -689,7 +694,7 @@ class TestPauseResume:
                 self.worlds.append(world)
                 self._consume(notifications)
                 if self.rounds == 1:
-                    return [StartSession(spec=_spec("n1"), context="a")]
+                    return [StartSession(spec=_spec("n-slow"), context="a")]
                 if self.rounds == 2:
                     return [PauseRun(reason="awaiting_answer")]
                 return []

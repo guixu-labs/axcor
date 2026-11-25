@@ -1,5 +1,8 @@
 # Workflow Controller graph-test
 
+> 本目录原住仓根 `examples/graph-test`，现为 graph 插件翻译测试的场景输入
+> （`test_translator.py` 包内定位）；场景 YAML 仍可按下表手工试跑。
+
 用最小 DAG 演示 graph 工作流驱动的核心能力：**串行/并行调度、重试、回滚、子图、
 验收脚本、run_on_failure 收尾**。
 

@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from workflow_controller.driver import cli_base, codex_cli
+from workflow_controller.driver import cli_base, codex_catalog, codex_cli
 from workflow_controller.driver.codex_cli import (
     CodexCLIDriver,
     _build_args,
@@ -1258,9 +1258,19 @@ async def test_missing_cpx_reports_wrapper_command_and_remedy(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_internal_model_catalog_is_injected(monkeypatch, tmp_path):
-    catalog = tmp_path / "models.json"
-    catalog.write_text('{"models":[{"slug":"gpt-test"}]}', encoding="utf-8")
+async def test_glm_5_2_preset_catalog_is_injected(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        codex_catalog,
+        "_bundled_model_slugs",
+        lambda: frozenset(),
+    )
+    resolution = codex_catalog.resolve_codex_catalog(
+        model="glm-5.2",
+        config_dir=tmp_path,
+    )
+    assert resolution.status == "preset"
+    catalog = resolution.model_catalog_path
+    assert catalog is not None
     spawn = AsyncMock(return_value=_FakeCodexProc(0, [b""], []))
     monkeypatch.setattr(
         "workflow_controller.driver.codex_cli.asyncio.create_subprocess_exec", spawn
@@ -1269,12 +1279,14 @@ async def test_internal_model_catalog_is_injected(monkeypatch, tmp_path):
     _ = []
     async for event in CodexCLIDriver().query(
         "hi",
-        model="gpt-test",
+        model="glm-5.2",
         env={**_QUERY_ENV, "model_catalog_path": str(catalog)},
     ):
         _.append(event)
 
     assert f'model_catalog_json="{catalog.resolve()}"' in spawn.call_args.args
+    model_index = spawn.call_args.args.index("--model")
+    assert spawn.call_args.args[model_index + 1] == "glm-5.2"
     assert "model_catalog_path" not in spawn.call_args.kwargs["env"]
     assert not [key for key in spawn.call_args.kwargs["env"] if key.endswith("MODEL_CATALOG")]
 

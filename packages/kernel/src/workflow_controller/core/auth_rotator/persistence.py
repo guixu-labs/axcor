@@ -197,6 +197,9 @@ class AuthProvider:
 
     runtime: str | None = None
 
+    # 全局唯一的显示名（新建会话下拉/Provider 列表用），空值在加载时回填。
+    custom_name: str | None = None
+
     # Codex CLI 专用的内部模型 catalog 路径；不进入 provider/子进程环境。
     model_catalog_path: str | None = None
 
@@ -244,6 +247,7 @@ class AuthProvider:
             model=d.get("model"),
             base_url=d.get("base_url"),
             runtime=d.get("runtime"),
+            custom_name=d.get("custom_name"),
             model_catalog_path=d.get("model_catalog_path"),
             provider_kind=d.get("provider_kind"),
             provider_kind_url=d.get("provider_kind_url"),
@@ -269,6 +273,7 @@ class AuthProvider:
             "model": self.model,
             "base_url": self.base_url,
             "runtime": self.runtime,
+            "custom_name": self.custom_name,
             "model_catalog_path": self.model_catalog_path,
             "provider_kind": self.provider_kind,
             "provider_kind_url": self.provider_kind_url,
