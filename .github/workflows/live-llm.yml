@@ -16,7 +16,8 @@ jobs:
       (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 12 个 fixture，单次调用超时 300s，限流时再重试 1 次，最坏约 12×600s=120min。
+    timeout-minutes: 120
     # Configure required reviewers before adding the model token to this environment.
     environment: live-llm
     steps:
@@ -41,4 +42,6 @@ jobs:
           : "${ANTHROPIC_AUTH_TOKEN:?Configure LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN in the live-llm environment}"
           : "${ANTHROPIC_BASE_URL:?Configure the LIVE_LLM_ANTHROPIC_BASE_URL variable}"
           : "${ANTHROPIC_MODEL:?Configure the LIVE_LLM_ANTHROPIC_MODEL variable}"
-          uv run --locked pytest -q --live -m 'live_llm or reviewer_recall'
+          # 只跑固定的 reviewer replay 目录：合并队列执行 base+PR 合并代码，
+          # 不能按 marker 全仓选择测试，否则 fork PR 可在别处新增打标测试窃取实模凭证。
+          uv run --locked pytest -q --live packages/kernel/kernel_tests/regression/reviewer/
