@@ -77,26 +77,6 @@ class LockedEvaluator:
             return await self._inner.evaluate(events, criteria, iteration)
 
 
-class MaxIterationEvaluator:
-    def __init__(self, inner: Evaluator, max_iterations: int) -> None:
-        self.inner = inner
-        self.max_iterations = max_iterations
-
-    async def evaluate(
-        self,
-        events: list[Event],
-        criteria: dict[str, Any],
-        iteration: int,
-    ) -> EvaluationResult:
-        if iteration >= self.max_iterations:
-            return EvaluationResult(
-                is_complete=True,
-                progress=1.0,
-                summary=f"Max iterations reached ({self.max_iterations})",
-            )
-        return await self.inner.evaluate(events, criteria, iteration)
-
-
 class AlwaysCompleteEvaluator:
     """Evaluator that always returns is_complete=True.
 
@@ -115,27 +95,4 @@ class AlwaysCompleteEvaluator:
             is_complete=True,
             progress=1.0,
             summary="Always-complete: one-shot task (no quality gate)",
-        )
-
-
-class ThresholdEvaluator:
-    def __init__(self, threshold: float = 1.0) -> None:
-        self.threshold = threshold
-
-    async def evaluate(
-        self,
-        events: list[Event],
-        criteria: dict[str, Any],
-        iteration: int,
-    ) -> EvaluationResult:
-        progress = criteria.get("progress", 0.0)
-        summary = criteria.get("summary", f"Iteration {iteration}: progress={progress}")
-        feedback = criteria.get("feedback")
-
-        is_complete = progress >= self.threshold
-        return EvaluationResult(
-            is_complete=is_complete,
-            progress=progress,
-            summary=summary,
-            feedback=None if is_complete else feedback,
         )
