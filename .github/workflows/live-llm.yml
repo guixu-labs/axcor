@@ -1,0 +1,44 @@
+name: live-llm
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-llm:
+    # Report a skipped check on PRs so they can enter the merge queue.
+    if: >-
+      (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Configure required reviewers before adding the model token to this environment.
+    environment: live-llm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装锁定依赖
+        run: uv sync --locked
+
+      - name: 运行实模测试
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: ${{ vars.LIVE_LLM_ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ vars.LIVE_LLM_ANTHROPIC_MODEL }}
+        run: |
+          : "${ANTHROPIC_AUTH_TOKEN:?Configure LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN in the live-llm environment}"
+          : "${ANTHROPIC_BASE_URL:?Configure the LIVE_LLM_ANTHROPIC_BASE_URL variable}"
+          : "${ANTHROPIC_MODEL:?Configure the LIVE_LLM_ANTHROPIC_MODEL variable}"
+          uv run --locked pytest -q --live -m 'live_llm or reviewer_recall'
