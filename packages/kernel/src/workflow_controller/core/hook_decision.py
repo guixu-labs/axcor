@@ -63,14 +63,14 @@ class HookDecision:
     rationale: str = ""
 
 
-# Prompt templates. {task_goal_block} renders to "" or "\n## 项目总体目标\n...\n".
+# Prompt templates. {task_goal_block} renders to "" or "\n## 会话任务目标\n...\n".
 
 
 def render_task_goal_block(task_goal: str) -> str:
     cleaned = (task_goal or "").strip()
     if not cleaned:
         return ""
-    return f"\n## 项目总体目标\n{cleaned}\n"
+    return f"\n## 会话任务目标\n{cleaned}\n"
 
 
 def _format_auq_options(q: AskQuestion) -> list[str]:

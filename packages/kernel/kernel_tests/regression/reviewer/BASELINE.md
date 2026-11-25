@@ -17,12 +17,12 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 - **AUQ 判定 = 纯叙述判断**（不读磁盘）：reviewer 为 worker 弹的每个问题选一个能让任务
   推进得最远的选项，规则核心是"忽略 worker 标的 (推荐) / 风险 / 安全 措辞"。
 
-## Fixture 清单（12 个，领域中性）
+## Fixture 清单（13 个，领域中性）
 
 所有 fixture 都是领域无关的通用软件 / 文档场景（保留被测的决策逻辑与 partial 信号）。
 算子领域专属 case 以后走 per-plugin 补。通用 fixture 按执行顺序从 01 连续编号。
 
-### STOP（6 个）
+### STOP（7 个）
 
 | ID | 被测决策逻辑 | 期望 |
 |---|---|---|
@@ -32,6 +32,7 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 | 08 | 本轮 5/5 完成、产物和验收记录齐备，另有独立后续阶段的建议 → 放行 | let_exit |
 | 11 | gate 类：worker 中途请审批（"回复 继续 / 通过"）→ feedback 极简"继续"，不展开缺失清单 | block |
 | 12 | 正向：技术调研文档任务，0 partial 信号，刻意脱离多阶段交付结构 → 放行（证明 let_exit 不绑领域） | let_exit |
+| 13 | 外部设备占用阻塞必需项（G2 门禁验证未执行），产物已落盘 → 保留未完成事实并阻断退出 | block |
 
 ### AUQ（6 个）
 
@@ -50,6 +51,12 @@ exit，断言聚焦在 `selected` 选对了哪个选项（`auq_must_select_one_o
 ## 当前基线状态
 
 **基线（2026-06-29，HttpDriver 路径 / temp=0）：12 PASS / 0 FAIL，可复现（连跑两次一致）。**
+
+**待重跑（2026-11-25）**：本次改动新增 fixture 13（外部设备占用阻塞必需项 → 必须
+`block_with_feedback`），并把 STOP 判据收紧为「会话任务目标下的全部必需项已完成」、移除
+「外部阻塞 → let_exit」出口。13 项实模基线尚未在有实模凭据的环境重跑，需重点核对
+fixture 08 / 12 两个 let_exit 正向样例在收紧后仍放行；离线 prompt 断言已覆盖本次改动，
+`pytest tests/regression/reviewer --live` 结果待补录。
 
 reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 循环、无 CC 框架），
 消除了 agent-loop 路径的 run-to-run 方差——`pytest tests/regression/reviewer --live` 现在

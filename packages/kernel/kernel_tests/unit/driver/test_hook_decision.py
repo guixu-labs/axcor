@@ -209,7 +209,7 @@ class TestRenderStopPrompt:
         release, blocking = prompt.split("2. **block_with_feedback 的常见情境**:", 1)
         rule = "必需项因外部依赖未就绪而未完成时,必须返回 block_with_feedback"
         assert "会话任务目标下的全部必需项已完成" in release
-        assert "本轮任务的全部必需项已完成" not in release
+        assert "能做的全部工作" not in prompt
         assert rule not in release
         assert rule in blocking
         assert "已做完能做的, 剩下卡外部" not in prompt
@@ -222,7 +222,7 @@ class TestRenderStopPrompt:
             sandbox_root="/tmp/sb",
         )
         # The goal block has a literal header marker we can probe for
-        assert "项目总体目标" not in out
+        assert "## 会话任务目标" not in out
 
 
 class TestRenderAuqPrompt:
