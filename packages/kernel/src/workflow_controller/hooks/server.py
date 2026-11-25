@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class HookServerStartupError(RuntimeError):
-    """An enabled Hook Server could not start."""
+    """A required Hook Server failed to start or is unavailable."""
 
 
 class HookServer:

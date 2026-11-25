@@ -329,12 +329,19 @@ class Orchestrator:
             self._plugin_registry.load(self, self._hook_server)
             try:
                 await self._hook_server.start()
+                self._refresh_claude_cli_hooks(
+                    self.config.runtime,
+                    Path(self.config.project_dir),
+                )
             except Exception as exc:
                 host, port = self._hook_server.host, self._hook_server.port
                 self._hook_server = None
                 self._plugin_registry.unload_all()
                 await self.bus.stop()
-                message = f"Hook Server 无法绑定 {host}:{port}，Workflow Controller 启动失败。{exc}"
+                message = (
+                    f"Hook Server 启动或 Claude hooks 刷新失败（{host}:{port}），"
+                    f"Workflow Controller 启动失败。{exc}"
+                )
                 logger.error(message)
                 raise HookServerStartupError(message) from exc
 
@@ -1072,6 +1079,16 @@ class Orchestrator:
         )
         generator.write_settings((project_dir or Path.cwd()).resolve())
 
+    def _refresh_claude_cli_hooks(self, runtime: str | None, project_dir: Path) -> None:
+        """Refresh Claude CLI HTTP hooks and reject activation without a live server."""
+        from workflow_controller.driver.factory import resolve_runtime
+
+        if resolve_runtime(runtime) != "claude_cli":
+            return
+        if not self.hook_server_active:
+            raise HookServerStartupError("Claude CLI session requires an active Hook Server")
+        self.generate_hook_config(project_dir)
+
     async def _restart_hook_server(self) -> None:
         """重载后重启 hook server：端口占用最多重试 3 次（间隔 0.3s）。"""
         for attempt in range(3):
@@ -1168,6 +1185,7 @@ class Orchestrator:
         # global provider/reviewer changes cannot affect this session later.
         await self._ensure_session_snapshots(session)
         await self._validate_session_provider_bindings(session)
+        self._refresh_claude_cli_hooks(session.config.runtime, Path(session.config.cwd))
         # 状态迁移事件接线：钩子随激活安装，session 终身有效（去激活后仍可发射）
         session.set_state_change_hook(self._schedule_session_state_event)
         session.set_outcome_emitter(self._emit_session_outcome_event)
