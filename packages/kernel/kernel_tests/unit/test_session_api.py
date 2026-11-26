@@ -51,11 +51,15 @@ async def test_stop_all_waits_for_direct_session_stop_and_rejects_workflow_membe
         api, "list_sessions", lambda: [MagicMock(id="member"), MagicMock(id="direct")]
     )
 
-    with pytest.raises(WorkflowSessionOperationError, match="run"):
+    with pytest.raises(ExceptionGroup, match="部分会话停止失败") as excinfo:
         await api.stop_all()
 
     orch.stop_session.assert_awaited_once_with("direct")
     assert stopped == ["direct"]
+    assert any(
+        isinstance(err, WorkflowSessionOperationError) and "run" in str(err)
+        for err in excinfo.value.exceptions
+    )
 
 
 def test_list_claude_sessions_discovers_other_user_home(tmp_path, monkeypatch):

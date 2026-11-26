@@ -756,11 +756,12 @@ class SessionAPI:
         await self._orch.stop_session(session_id)
 
     async def stop_all(self) -> None:
+        """批量停止：逐会话归属校验后停止；任一失败时聚合全部失败信息抛出。"""
         sessions = self.list_sessions()
         results = await asyncio.gather(*(self.stop(s.id) for s in sessions), return_exceptions=True)
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise BaseExceptionGroup("stop_all: 部分会话停止失败", failures)
 
     async def pause(self, session_id: str) -> None:
         await self._assert_session_writable(session_id)
@@ -816,6 +817,10 @@ class SessionAPI:
         clean_reconstruct: str | None = None,
     ) -> dict[str, Any]:
         """删除 session：stop( reap worker) → 清声明的 stage 产物 → 移出 pool → 清 events。
+
+        workflow 成员（归属 RunKind.WORKFLOW 的 run）在停止/清理前被拒绝，抛
+        ``WorkflowSessionOperationError`` 并保留会话、事件与产物；整 Run 删除请经
+        ``RunAPI.delete()`` 级联处理。
 
         stop 走完整路径 ``orchestrator.stop_session``（= engine.request_stop + pool.stop +
         driver.kill），**不是**直接 ``pool.stop``——后者不设 loop engine 的 ``_stop_event``，

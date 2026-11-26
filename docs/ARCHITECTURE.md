@@ -332,7 +332,7 @@ class RunRecord:
 4. 组操作幂等与序——pause 跳过已结束成员绝不覆盖 stop_reason；stop 先杀进程组后停 session；AwaitSessions 超时返回前必已停该 session；
 5. 准入公平且事件驱动——Start 类动作超 max_parallel 并发进挂起 FIFO，驱动不感知（world in-flight 计数一致，以激活回执——含失败回执——为界回收）；挂起等待以容量释放事件唤醒，不忙等；终态收尾轮不 pump、清空挂起队列（冻结新出生）；组控/终态受理在成员扫掠/落终态前排空在途激活回执、用户暂停的冻结谓词下沉到每个派发点（批内派发循环/挂起泵对 Start 类与 StartProcess（仅暂停窗）复检 paused——挂起 FIFO、resume 后 pump），迟到出生不逃逸组控与终态；pause_run 杀 run 键进程前、run 任务退出后置杀前均排空在途 spawn 任务（注册表对已派发 StartProcess 全量，无「已派发未落定」窗口）——**手动 pause_run 窗内 run 键进程零存活（终止不是挂起）**，迟到进程 spawn 不逃逸、孤儿零残留；驱动自暂停（`PauseRun`→`driver_pause_run`）为不杀在途的受理分道——成员不挂起、run 键进程放行跑完、回执照常入队滞留 FIFO 到恢复轮，消费方不得由 paused(user) 推断「无在途」；
 6. 快照边界——动作批后/控制后/收尾前核心自动落盘驱动快照（最坏崩溃丢失 = 最后一批动作之后）；终态控制受理后驱动裁决 FinishRun 的直退路径不落账但快照照落（终态优先权在控制侧，最终驱动状态仍须落盘）；
-7. 单一写者——workflow 成员的 pause/resume/stop/inject 只经 RunCoordinator；RunCoordinator 对成员的一切操作只经 SO 原语；成员级 resume 仅受理正在运行的 workflow Run 中处于用户暂停断点的成员，整组暂停或终态需先经 Run 级恢复/重开，让驱动决定下一步；`SessionAPI.stop_all()` 对每个会话调用 `stop()`，等待本批操作结束后向调用方传播停止错误；`SessionAPI.delete()` 在停止会话或清理数据之前检查归属，拒绝单独删除 workflow 成员。整 Run 删除由 `RunAPI.delete()` 级联处理。
+7. 单一写者——workflow 成员的 pause/resume/stop/inject 只经 RunCoordinator；RunCoordinator 对成员的一切操作只经 SO 原语；成员级 resume 仅受理正在运行的 workflow Run 中处于用户暂停断点的成员，整组暂停或终态需先经 Run 级恢复/重开，让驱动决定下一步；`SessionAPI.stop_all()` 对每个会话调用 `stop()`，等待本批操作结束后以 `ExceptionGroup` 聚合传播全部停止错误（不丢弃后续失败）；`SessionAPI.delete()` 在停止会话或清理数据之前检查归属，拒绝单独删除 workflow 成员。整 Run 删除由 `RunAPI.delete()` 级联处理。
 8. 数据恒守护进程级单库——run_events/run_driver_state/runs 族/events/名册同库不分裂、不分库；session 事件不经 cwd 路由；
 9. 打戳唯一入口——事件 run_id/context 维度只从归属缓存来（attach/mint 维护，boot 双源重建）；
 10. boot 恢复单路径——runs 表驱动 + 驱动 restore，无第二条恢复链；
