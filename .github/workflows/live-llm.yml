@@ -38,14 +38,14 @@ jobs:
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ vars.LIVE_LLM_ANTHROPIC_BASE_URL }}
-          ANTHROPIC_MODELS: ${{ vars.ANTHROPIC_MODELS }}
+          ANTHROPIC_MODELS: ${{ vars.LIVE_LLM_ANTHROPIC_MODELS }}
         run: |
           : "${ANTHROPIC_AUTH_TOKEN:?Configure LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN in the live-llm environment}"
           : "${ANTHROPIC_BASE_URL:?Configure the LIVE_LLM_ANTHROPIC_BASE_URL variable}"
           model_list="${ANTHROPIC_MODELS//$'\n'/ }"
           read -r -a models <<< "${model_list//,/ }"
           if (( ${#models[@]} == 0 )); then
-            echo "Configure the ANTHROPIC_MODELS variable" >&2
+            echo "Configure the LIVE_LLM_ANTHROPIC_MODELS variable" >&2
             exit 1
           fi
 
