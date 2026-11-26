@@ -159,8 +159,7 @@ session 拥有独立的 loop、停止/重试/auth-switch 事件和人工输入�
 恢复、停止、Reviewer 放行及 subagent 唤醒只影响目标 session。完成后的 runtime task 会被
 回收，Session 与事件元数据继续保留；shutdown 并发停止并等待所有 runtime。
 
-暂停和恢复保留 Session 的当前轮次。循环引擎为恢复后发出的查询分配下一轮编号；
-第 3 轮暂停后从第 4 轮继续，首轮开始前暂停则从第 1 轮发送初始提示。
+暂停和恢复保留 Session 的当前轮次。循环引擎为恢复后发出的查询分配下一轮编号；第 3 轮暂停后从第 4 轮继续，首轮开始前暂停则从第 1 轮发送初始提示。
 
 Session 创建与 runtime 激活构成原子生命周期：`pool.create` 会先写入 session 元数据，
 但后续配置快照、Reviewer 或 loop 初始化任一步失败（包括请求被取消）时，Orchestrator 必须
