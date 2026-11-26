@@ -227,7 +227,7 @@ def test_update_config_persists_hook_server_enabled(tmp_path, enabled):
     assert updated["hook_server"]["enabled"] is enabled
     assert AppConfig.from_yaml(config_path).hook_server.enabled is enabled
 
-    with pytest.raises(ValueError, match=r"hook_server\.port 不支持配置"):
+    with pytest.raises(ValueError, match=r"hook_server\.port 不再支持配置"):
         api.update_config({"hook_server": {"port": 18766}})
     assert AppConfig.from_yaml(config_path).hook_server.enabled is enabled
     assert not hasattr(AppConfig.from_yaml(config_path).hook_server, "port")

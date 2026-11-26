@@ -352,7 +352,8 @@ class Orchestrator:
                 self._refresh_runtime_hooks(self.config.runtime, Path(self.config.project_dir))
             except Exception as exc:
                 hook_server = self._hook_server
-                host, port = hook_server.host, hook_server.port
+                host = hook_server.host
+                port = self.effective_hook_server_port
                 self._hook_server = None
                 try:
                     await hook_server.stop_server()

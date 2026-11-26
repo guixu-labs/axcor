@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 from pathlib import Path
 
@@ -33,9 +34,10 @@ async def run_fake_program(workdir: Path) -> str:
     """boot 内核并跑一个 fake@1 程序到终态，返回 run 状态。"""
     program = workdir / "fake-program.yaml"
     program.write_text("format: fake@1\n", encoding="utf-8")
+    os.environ["WORKFLOW_CONTROLLER_HOOK_PORT"] = "0"
     config = AppConfig(
         project_dir=str(workdir),
-        hook_server=HookServerConfig(enabled=True, port=0),
+        hook_server=HookServerConfig(enabled=True),
         reviewer=ReviewerConfig(enabled=False),
     )
     orchestrator, api = await boot(config, workdir / "workflow-controller-config.yaml")

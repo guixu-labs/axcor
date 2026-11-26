@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CoreAPI boot() 对 Web CLI Hook Server 端口覆盖的接缝测试。"""
+"""CoreAPI boot() 对 Web CLI Hook Server 端口覆盖的集成测试。"""
 
 from __future__ import annotations
 
