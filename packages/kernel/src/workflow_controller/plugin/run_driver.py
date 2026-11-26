@@ -450,6 +450,26 @@ class OpRequest(RunNotification):
     reply: Any = None
 
 
+@dataclass(frozen=True)
+class DispatchBarrierRequest(RunNotification):
+    """派发屏障请求：会话宿主发起，run 任务内执行核心动作后经 Future 回传。
+
+    kind 词面：side_effect（⑤ 写文件类/Bash 副作用前）| dispatch（① task
+    创建前）。data 为驱动层规整后的 CC 风格载荷（tool_name/tool_input/
+    tool_use_id/native 会话与消息标识）；reply 为 asyncio.Future，结果为
+    驱动层屏障结果（放行 + 子工作区 cwd / 拒绝）。
+    """
+
+    kind: str
+    session_id: str
+    runtime: str
+    context: str | None = None
+    data: Mapping[str, Any] = field(default_factory=dict)
+    reply: Any = None
+    # 子代理工作区声明：writer（默认）| reader（detached 只读快照）
+    workspace: str = "writer"
+
+
 # ── 协议 ──────────────────────────────────────────────────────────
 
 
@@ -521,4 +541,16 @@ class RunDriverFactory(Protocol):
         self, run: RunRecord, snapshot: Mapping[str, Any], sessions: Sequence[RunSessionInfo]
     ) -> RunDriver:
         """从快照恢复；快照不可解析时抛错、run 标 failed(unrecoverable)。"""
+        ...
+
+
+class RunDriverReloader(Protocol):
+    """可选扩展：工厂侧重读当前程序定义（I/O 侧）并翻译为换装载荷。
+
+    载荷不透明（协调器只透传），经 reload_definition 驱动 op 在 run 任务
+    内完成换装；翻译/校验失败抛错，run 保持原定义原状态。
+    """
+
+    def reload_definition(self, run: RunRecord, driver: RunDriver, source: Path) -> Any:
+        """重读工作流源文件并翻译；driver 为协调器在册实例（只读快照可用）。"""
         ...

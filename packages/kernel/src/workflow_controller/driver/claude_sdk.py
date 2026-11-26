@@ -33,6 +33,14 @@ from workflow_controller.driver._permission import effective_permission_mode
 from workflow_controller.driver.claude_events import tool_pair_events
 from workflow_controller.driver.claude_lineage import ClaudeSubagentLineage
 from workflow_controller.driver.cli_base import CLIDriverBase, QueryOptions, error_end_events
+from workflow_controller.driver.hooks import (
+    DISPATCH_TOOL_NAMES,
+    SIDE_EFFECT_TOOL_NAMES,
+    BarrierDeny,
+    BarrierProceed,
+    is_dispatch_tool,
+    is_side_effect_tool,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -43,6 +51,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _sdk_setsid_patched = False
+
+# 副作用工具与 task 派发工具的 PreToolUse matcher（与驱动层分类器同源）
+_SIDE_EFFECT_MATCHER = "|".join(sorted(SIDE_EFFECT_TOOL_NAMES))
+_DISPATCH_MATCHER = "|".join(sorted(DISPATCH_TOOL_NAMES))
 
 
 def _patch_sdk_setsid() -> None:
@@ -276,14 +288,24 @@ class ClaudeSDKDriver(CLIDriverBase):
         )
         subagent_stop_cb = functools.partial(_sdk_subagent_stop_cb, hooks=hooks)
         sdk_hooks: dict[str, Any] = {}
+        pre_matchers: list[Any] = []
         if hooks.on_pre_tool_use is not None:
-            sdk_hooks["PreToolUse"] = [
-                HookMatcher(matcher="AskUserQuestion", hooks=[pre_cb]),  # type: ignore[list-item]
-                HookMatcher(
-                    matcher="Edit|Write|Bash|MultiEdit|NotebookEdit|Patch|apply_patch",
-                    hooks=[pre_cb],  # type: ignore[list-item]
-                ),
-            ]
+            pre_matchers.append(HookMatcher(matcher="AskUserQuestion", hooks=[pre_cb]))  # type: ignore[list-item]
+            pre_matchers.append(
+                HookMatcher(matcher=_SIDE_EFFECT_MATCHER, hooks=[pre_cb])  # type: ignore[list-item]
+            )
+        elif hooks.before_side_effect_tool is not None:
+            # ⑤ 副作用屏障独立接线（无 reviewer 拦截面时仍拦副作用工具）
+            pre_matchers.append(
+                HookMatcher(matcher=_SIDE_EFFECT_MATCHER, hooks=[pre_cb])  # type: ignore[list-item]
+            )
+        if hooks.before_subagent_dispatch is not None:
+            # ① task 派发前置屏障：Task 工具执行（即子代理创建）前触发
+            pre_matchers.append(
+                HookMatcher(matcher=_DISPATCH_MATCHER, hooks=[pre_cb])  # type: ignore[list-item]
+            )
+        if pre_matchers:
+            sdk_hooks["PreToolUse"] = pre_matchers
         if hooks.on_post_tool_use is not None:
             sdk_hooks["PostToolUse"] = [HookMatcher(matcher="*", hooks=[post_cb])]  # type: ignore[list-item]
             sdk_hooks["PostToolUseFailure"] = [
@@ -455,10 +477,9 @@ def _sdk_user_event(msg: object, session_id: str, iteration: int) -> Event:
 async def _sdk_pre_tool_cb(
     input_data: dict[str, Any], tool_use_id: str | None, context: object, *, hooks: DriverHooks
 ) -> dict[str, Any]:
-    if hooks.on_pre_tool_use is None:
-        return {}
+    tool_name = str(input_data.get("tool_name", ""))
     data = {
-        "tool_name": input_data.get("tool_name", ""),
+        "tool_name": tool_name,
         "tool_input": input_data.get("tool_input", {}),
         "tool_use_id": tool_use_id or input_data.get("tool_use_id", ""),
         "native_session_id": input_data.get("session_id", ""),
@@ -466,9 +487,46 @@ async def _sdk_pre_tool_cb(
         "parent_tool_use_id": input_data.get("parent_tool_use_id", ""),
         "agent_id": input_data.get("agent_id", ""),
         "agent_type": input_data.get("agent_type", ""),
+        "prompt_id": input_data.get("prompt_id", ""),
+        # 子代理工作区声明（reader 快照）经工具输入透传；未声明按 writer
+        "workspace": (input_data.get("tool_input") or {}).get("workspace", "writer")
+        if isinstance(input_data.get("tool_input"), dict)
+        else "writer",
     }
-    result = await hooks.on_pre_tool_use(hooks.session_id, data)
-    return result or {}
+    # 前置屏障（⑤ 副作用 / ① task 派发）：拒绝即阻断工具执行
+    barrier_outcome: BarrierProceed | BarrierDeny | None = None
+    if is_dispatch_tool(tool_name) and hooks.before_subagent_dispatch is not None:
+        barrier_outcome = await hooks.before_subagent_dispatch(hooks.session_id, data)
+    elif is_side_effect_tool(tool_name) and hooks.before_side_effect_tool is not None:
+        barrier_outcome = await hooks.before_side_effect_tool(hooks.session_id, data)
+    if isinstance(barrier_outcome, BarrierDeny):
+        reason = barrier_outcome.reason
+        if barrier_outcome.fault:
+            reason = f"{reason}（{barrier_outcome.fault}）"
+        return {"decision": "block", "reason": reason}
+    result: dict[str, Any] = {}
+    if hooks.on_pre_tool_use is not None:
+        decision = await hooks.on_pre_tool_use(hooks.session_id, data)
+        result = decision or {}
+    if result.get("decision") == "block":
+        return result
+    if (
+        isinstance(barrier_outcome, BarrierProceed)
+        and barrier_outcome.child_cwd
+        and is_dispatch_tool(tool_name)
+    ):
+        # ② cwd 注入：PreToolUse updatedInput 重写 Task 输入，子代理在
+        # 作用域工作区内启动
+        tool_input = dict(input_data.get("tool_input") or {})
+        tool_input["cwd"] = barrier_outcome.child_cwd
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": tool_input,
+            }
+        }
+    return result
 
 
 async def _sdk_post_tool_cb(

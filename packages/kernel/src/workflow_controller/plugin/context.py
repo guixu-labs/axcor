@@ -67,7 +67,7 @@ class PluginServices:
     subagent_context_reader: Callable[..., int] | None = None
     main_source_snapshotter: Callable[..., bool] | None = None
     subagent_source_snapshotter: Callable[..., bool] | None = None
-    # session/事件面只读与编排端口：插件（如 agent_traceback 检查点重放）需要查
+    # session/事件面只读与编排端口：消费方（如检查点重放、会话导入）需要查
     # 宿主 session、持久化记录与事件库——经端口逐能力委托，不直访 orchestrator
     session_finder: Callable[[str], Any] | None = None
     session_lister: Callable[[], list[Any]] | None = None

@@ -48,6 +48,10 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from workflow_controller.core.checkpoints import (
+    IDX_SCOPE_CHECKPOINTS_SCOPE_DDL,
+    SCOPE_CHECKPOINTS_DDL,
+)
 from workflow_controller.core.status_maps import (
     NON_TERMINAL_STATUSES,
     TERMINAL_STATUSES,
@@ -60,6 +64,10 @@ from workflow_controller.store.event_store import (
     IDX_RUN_EVENTS_DDL,
     RUN_EVENTS_DDL,
     SESSIONS_DDL,
+)
+from workflow_controller.watchdog.ledger import (
+    IDX_WATCHDOG_NODE_CLOCKS_RUN_DDL,
+    WATCHDOG_NODE_CLOCKS_DDL,
 )
 
 if TYPE_CHECKING:
@@ -98,14 +106,18 @@ def _coerce_enum(value: str, enum_cls: type[StrEnum]) -> str:
 # events.db user_version 阶梯当前档（唯一写者 = RunStore）：
 # v1 = runs 族建表；v2 = events 重建（维度列/持久主键）+ run_events + runs 扩删列；
 # v3 = 驱动状态两表（最新快照 + append-only 历史）；
-# v4 = run_driver_state 增终态投影列（/state 降级读源）。
-SCHEMA_VERSION = 4
+# v4 = run_driver_state 增终态投影列（/state 降级读源）；
+# v5 = 作用域检查点账本表（与遗留插件的旧检查点表并存，互不相扰）；
+# v6 = watchdog 节点累计时钟账本表（节点超时规则的重启保留面）。
+SCHEMA_VERSION = 6
 
 # 档位特征列：判定库 schema 是否齐备（幂等位探针）。
 _V1_RUNS_FEATURES = ("kind", "work_dir", "reopened_at")
 _V2_RUNS_FEATURES = ("pause_reason", "max_parallel")
 _V3_TABLES = ("run_driver_state", "run_driver_snapshots")
 _V4_RDS_FEATURES = ("projection",)
+_V5_TABLES = ("scope_checkpoints",)
+_V6_TABLES = ("watchdog_node_clocks",)
 # v2 撤销的预算两列（run 级预算不实现）
 _RETIRED_RUNS_COLUMNS = ("max_budget_usd", "spent_usd")
 _V1_SESSIONS_ADDITIONS = (
@@ -350,6 +362,8 @@ class RunStore:
         }
         v3_ok = set(_V3_TABLES) <= tables
         v4_ok = set(_V4_RDS_FEATURES) <= _table_columns(conn, "run_driver_state")
+        v5_ok = set(_V5_TABLES) <= tables
+        v6_ok = set(_V6_TABLES) <= tables
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         return (
             runs_ok
@@ -358,6 +372,8 @@ class RunStore:
             and roster_ok
             and v3_ok
             and v4_ok
+            and v5_ok
+            and v6_ok
             and version >= SCHEMA_VERSION
         )
 
@@ -602,6 +618,10 @@ class RunStore:
         """边界快照追加历史：内容哈希去重，未变不入行；返回新行 id 或 None。"""
         return await asyncio.to_thread(self._append_driver_snapshot_locked, run_id, blob)
 
+    async def latest_driver_snapshot_id(self, run_id: str) -> int | None:
+        """该 run 最新历史快照行 id（从未追加过为 None）。"""
+        return await asyncio.to_thread(self._latest_driver_snapshot_id_locked, run_id)
+
     async def list_driver_snapshots(self, run_id: str) -> list[dict]:
         """快照历史（(run_id, seq) 有序，导出与回放的数据面）。"""
         return await asyncio.to_thread(self._list_driver_snapshots_locked, run_id)
@@ -674,6 +694,10 @@ class RunStore:
                 conn.execute("ALTER TABLE run_driver_state ADD COLUMN projection TEXT")
             conn.execute(RUN_DRIVER_SNAPSHOTS_DDL)
             conn.execute(IDX_RDS_HIST_DDL)
+            conn.execute(SCOPE_CHECKPOINTS_DDL)
+            conn.execute(IDX_SCOPE_CHECKPOINTS_SCOPE_DDL)
+            conn.execute(WATCHDOG_NODE_CLOCKS_DDL)
+            conn.execute(IDX_WATCHDOG_NODE_CLOCKS_RUN_DDL)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         except BaseException:
@@ -1106,6 +1130,15 @@ class RunStore:
             )
             return int(cur.lastrowid)
 
+    def _latest_driver_snapshot_id_locked(self, run_id: str) -> int | None:
+        """同步面：最新历史快照行 id。"""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM run_driver_snapshots WHERE run_id = ? ORDER BY seq DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return int(row["id"]) if row is not None else None
+
     def _list_driver_snapshots_locked(self, run_id: str) -> list[dict]:
         """同步面：快照历史按 seq 有序读出。"""
         with self._lock, self._connect() as conn:
@@ -1161,6 +1194,7 @@ class RunStore:
                 conn.execute("DELETE FROM run_events WHERE run_id = ?", (run_id,))
                 conn.execute("DELETE FROM run_driver_snapshots WHERE run_id = ?", (run_id,))
                 conn.execute("DELETE FROM run_driver_state WHERE run_id = ?", (run_id,))
+                conn.execute("DELETE FROM watchdog_node_clocks WHERE run_id = ?", (run_id,))
                 conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
                 conn.execute("COMMIT")
             except BaseException:

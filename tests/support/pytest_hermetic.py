@@ -39,6 +39,14 @@ _ORIGINAL_APIS = {
     **{(socket, name): getattr(socket, name) for name in _DNS_API_NAMES},
 }
 
+# 测试内裸 git 提交的身份：CI 无全局 git 身份、主机名不可解析时自动推导失败
+_TEST_GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "workflow-controller-pytest",
+    "GIT_AUTHOR_EMAIL": "workflow-controller-pytest@local",
+    "GIT_COMMITTER_NAME": "workflow-controller-pytest",
+    "GIT_COMMITTER_EMAIL": "workflow-controller-pytest@local",
+}
+
 
 class ExternalNetworkBlockedError(RuntimeError):
     pass
@@ -130,6 +138,7 @@ def pytest_configure(config: pytest.Config) -> None:
     setattr(config, "_workflow_controller_config_dir", config_dir)  # type: ignore[attr-defined]
     os.environ["HOME"] = str(config_dir)
     os.environ["XDG_CONFIG_HOME"] = str(config_dir)
+    os.environ.update(_TEST_GIT_IDENTITY)
     if not config.getoption("--live"):
         _install_network_guard()
 
@@ -177,6 +186,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     expected = dict(original)
     expected["HOME"] = str(config_dir)
     expected["XDG_CONFIG_HOME"] = str(config_dir)
+    expected.update(_TEST_GIT_IDENTITY)
     if current != expected and session.exitstatus == pytest.ExitCode.OK:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
     os.environ.clear()

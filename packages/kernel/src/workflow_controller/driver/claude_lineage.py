@@ -40,6 +40,7 @@ class ClaudeSubagentLineage:
             "agent_type": str(data.get("agent_type") or ""),
             "parent_agent_id": "",
             "session_id": str(data.get("session_id") or ""),
+            "parent_tool_use_id": str(data.get("parent_tool_use_id") or ""),
         }
 
     def observe_raw(self, line: bytes) -> list[dict[str, str]]:
@@ -117,5 +118,6 @@ class ClaudeSubagentLineage:
                 "agent_type": str(data.get("subagent_type") or data.get("agent_type") or ""),
                 "parent_agent_id": parent,
                 "session_id": str(data.get("session_id") or ""),
+                "tool_use_id": dispatch_id,
             }
         ]

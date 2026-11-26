@@ -23,7 +23,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "workflow-controller-plugin-agent-traceback",
     "workflow-controller-plugin-breather",
     "workflow-controller-plugin-fake-driver",
     "workflow-controller-plugin-file-provenance",
@@ -45,7 +44,6 @@ package = false
 
 [tool.uv.sources]
 workflow-controller-kernel = { workspace = true }
-workflow-controller-plugin-agent-traceback = { workspace = true }
 workflow-controller-plugin-breather = { workspace = true }
 workflow-controller-plugin-fake-driver = { workspace = true }
 workflow-controller-plugin-file-provenance = { workspace = true }
@@ -56,7 +54,6 @@ workflow-controller-plugin-staged-pipeline = { workspace = true }
 members = [
     "packages/kernel",
     "packages/hookserver",
-    "packages/plugins/agent-traceback",
     "packages/plugins/breather",
     "packages/plugins/fake-driver",
     "packages/plugins/file-provenance",

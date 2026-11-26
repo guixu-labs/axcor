@@ -44,11 +44,17 @@ if TYPE_CHECKING:
 
 
 class SwitchBus:
-    """测试总线：把 session 事件转发给已注册的观察者。"""
+    """测试总线：把 session 事件转发给已注册的观察者。
+
+    对齐生产总线的单库双表分派：装配了 run 键落库面时，有 run 归属且无
+    session 身份的事件（如 watchdog 的 run 键告警）经落库面进 run_events
+    表；session 键事件仅分发（成员事件落库不归测试总线）。
+    """
 
     def __init__(self) -> None:
         self._observers: dict[Any, list[Any]] = {}
         self._awaited: dict[Any, list[Any]] = {}
+        self._run_event_sink: Any = None
 
     def observe(self, event_type: Any, callback: Any) -> None:
         self._observers.setdefault(event_type, []).append(callback)
@@ -61,14 +67,23 @@ class SwitchBus:
         if handlers:
             handlers.remove(callback)
 
-    async def emit(self, event: Event) -> None:
+    def set_run_event_sink(self, sink: Any) -> None:
+        """装配 run 键事件落库面（异步回调：Event → run_events 表）。"""
+        self._run_event_sink = sink
+
+    async def _dispatch(self, event: Event) -> None:
         for callback in self._awaited.get(event.event_type, []) + self._observers.get(
             event.event_type, []
         ):
             await callback(event)
 
+    async def emit(self, event: Event) -> None:
+        if event.run_id is not None and not event.session_id and self._run_event_sink is not None:
+            await self._run_event_sink(event)
+        await self._dispatch(event)
+
     async def emit_ephemeral(self, event: Event) -> None:
-        await self.emit(event)
+        await self._dispatch(event)
 
 
 class FakeAgentSession:
@@ -322,6 +337,9 @@ class GraphRunPlaneEnv:
         self.affiliation = SessionRunAffiliationService(self.store)
         self.bus = SwitchBus()
         self.so = FakeRunSO(self.bus, self.affiliation, tmp, auto_release)
+        # run 键事件落库面：内核订阅者（watchdog）经总线发 run 键告警时与
+        # 生产同规则落 run_events 表（协调器分发面已自行落库、只分发）
+        self.bus.set_run_event_sink(self._store_run_event)
         self.plugin = GraphPlugin(
             PluginConfig(name="graph", version="0.1.0", enabled=True),
             tmp / "config.yaml",
@@ -392,6 +410,16 @@ class GraphRunPlaneEnv:
     def driver_of(self, run_id: str) -> Any:
         """run 的内存驱动实例（插件 run_id 键注册表）。"""
         return getattr(self.plugin, "_drivers")[run_id]
+
+    async def _store_run_event(self, event: Event) -> None:
+        """run 键事件落库回调（SwitchBus 落库面）。"""
+        await self.so.event_router.default_store.store_run_event(
+            event.run_id or "",
+            event.event_type,
+            dict(event.data or {}),
+            context=event.context,
+            timestamp=event.timestamp,
+        )
 
     def node_info(self, run_id: str, node_id: str) -> dict[str, Any]:
         """节点态快照切片。"""

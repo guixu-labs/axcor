@@ -43,7 +43,7 @@ class Event:
 | | `STEP_FINISH` | step/turn 结果（含 usage）| driver | auth_rotator、breather（抽 usage）、reviewer |
 | | `ERROR` | 错误（**可观测日志**）| driver | 前端展示；LimitDetector 不消费（限流信号已由 driver 翻成 `RATE_LIMIT`，ERROR 不再承载轮换决策）|
 | | `RATE_LIMIT` | **driver 无关的归一化限流事件**（`data.limit_signal={kind,scope,reset_at,utilization,source}` + `data.raw` 原生负载）| 三路 driver（claude_cli 结构化 `rate_limit_info` / claude_sdk 异常文本正则 / opencode error dict `statusCode`）| LimitDetector（on_rate_limit / on_limit_detected / on_quota_warning）|
-| **子代理** | `SUBAGENT_START` | 子代理启动 | orchestrator | watchdog、agent_traceback（**可被拦截**——冻文件态快照，阻塞串行）、前端 |
+| **子代理** | `SUBAGENT_START` | 子代理启动 | orchestrator | watchdog、前端 |
 | | `SUBAGENT_PROGRESS` | 子代理增量消息流（opencode 轮询、claude 暂未支持）| orchestrator | watchdog、前端 |
 | | `SUBAGENT_STOP` | 子代理结束（含 token/content/messages）| orchestrator | watchdog、breather（handoff 检查时机）、前端 |
 | | `PROMPT_OVERLAY_REGISTERED` | 用户注册 prompt overlay（per-subagent-type 或 global）| session_api（`bus.emit`，回流总线）| 审计追踪 + 可 `bus.observe` 订阅；overlay 注册表状态**同步写**（不进 observer，保「注册→下一轮生效」契约，见重构设计附录 C.5）|
@@ -208,8 +208,7 @@ EventBus 内部是 **拦截器链（inline）+ 观察者队列（async）** 的�
 | `pre_tool_use` | reviewer（:1285）+ 插件 | 0 / 插件 10 | AskUserQuestion 拦截决策 |
 | `iteration_boundary` | reviewer（:1290）+ 插件（staged_pipeline/breather） | 0 / 插件 10 | loop 边界门禁 |
 | `gate_question` | reviewer（:1295） | 0 | opencode MCP gate 问答：auto→reviewer AUQ、manual→人工队列 |
-| `session_delete` | 插件（agent_traceback） | 插件 10 | inline sync 清理（rmtree fork_root 等） |
-| `SUBAGENT_START` | 插件（agent_traceback） | 插件 10 | 冻文件态快照、阻塞串行 |
+| `session_delete` | 插件（file_provenance） | 插件 10 | inline sync 清理（provenance store 按会话脱敏） |
 
 **为什么拦截器与两类观察者采用不同投递方式**：拦截器要回流决策结果给调用方（`_decide_stop` 拿 InterceptResult 决定 allow/deny 并回 driver），因此 inline 执行并允许短路。普通 `observe` 观察者只读、不影响控制流，放后台队列让 `emit()` 尽快返回，避免 worker loop 被慢观察者拖住；`observe_awaited` 也只读、没有控制权，但用于发布者返回前必须完成的副作用，因此在 interceptor 之后 inline 串行执行。两类 observer 都先执行事件类型对应的 handler，再执行 `"*"` 通配 handler。持久化先于所有派发，观察者不需要自己再查库确认事件已落盘。普通观察者的代价是有队列调度延迟（通常 <1ms）；awaited observer 的代价是其耗时直接增加到 `emit()` 延迟。
 
@@ -432,7 +431,7 @@ opencode 的 task 工具在一个已完成 tool_use 事件里（call + result �
 
 - **breather**（`plugin.py`）：`_on_context_event` 只关心 `SUBAGENT_STOP`——subagent 返回点是 handoff 检查时机。在 `_register_observers` 里通过 `bus.observe(SUBAGENT_STOP)` 注册。
 - **breather**（`plugin.py`）：`_on_notify_skill_hook` 查 `TOOL_RESULT` 的 `tool_name` 匹配 `notify_skill`；工具事件对齐后（§1.3）三路 driver + HookServer 均命中（此前仅 CLI/HTTP hook）。在 `_register_observers` 里通过 `bus.observe(TOOL_RESULT)` 注册（`notify_skill` 配置时）。
-- **agent_traceback / staged_pipeline**：不 observe bus；拦截器/观察者一律在 `_register_interceptors` / `_register_observers`（由 `install` 默认 body 派发）里 `ctx.bus.intercept(...)` / `ctx.bus.observe(...)` 自注册到 `EventBus`。
+- **staged_pipeline**：不 observe bus；拦截器/观察者一律在 `_register_interceptors` / `_register_observers`（由 `install` 默认 body 派发）里 `ctx.bus.intercept(...)` / `ctx.bus.observe(...)` 自注册到 `EventBus`。
 
 ### 5.3 SSE 推送
 

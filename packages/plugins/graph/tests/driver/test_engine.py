@@ -67,8 +67,16 @@ if TYPE_CHECKING:
 _RUN = RunRecord(run_id="r1", program_ref="/tmp/wf.yaml", format="graph-yaml@1")
 
 
-def build_driver(tmp_path: Path, nodes: list[dict], **cfg: object) -> GraphDriver:
-    """从节点清单构造驱动（yaml 落盘后经翻译器走生产构造路径）。"""
+def build_driver(
+    tmp_path: Path,
+    nodes: list[dict],
+    **cfg: object,
+) -> GraphDriver:
+    """从节点清单构造驱动（yaml 落盘后经翻译器走生产构造路径）。
+
+    ``runner_options`` 为驱动构造入参（runtime 等运行项，yaml 之外的通道）。
+    """
+    runner_options = dict(cfg.pop("_runner_options", {}))  # type: ignore[arg-type]
     cfg.setdefault("workflow", "wf")
     cfg.setdefault("max_parallel", 2)
     yaml_path = tmp_path / "wf.yaml"
@@ -85,7 +93,7 @@ def build_driver(tmp_path: Path, nodes: list[dict], **cfg: object) -> GraphDrive
         state=state,
         work_dir=tmp_path,
         yaml_path=yaml_path,
-        options={},
+        options=runner_options,
     )
 
 
@@ -2057,3 +2065,41 @@ class TestEventFace:
         )
         assert history.data["verify_type"] == "script"
         assert history.data["gen"] == 0
+
+    @staticmethod
+    def test_node_history_carries_resolved_timeout_seconds(tmp_path):
+        """节点累计超时时限随档案事件透传：默认、单节点覆盖与关闭三态。"""
+        driver = build_driver(
+            tmp_path,
+            [
+                bash_node("a", "true", acceptance={"enabled": False}),
+                bash_node("b", "true", acceptance={"enabled": False}),
+                bash_node("c", "true", acceptance={"enabled": False}),
+            ],
+            timeouts={"node_seconds": 7200, "nodes": {"b": 300, "c": 0}},
+        )
+        decide(driver)
+        actions = []
+        for node in ("a", "b", "c"):
+            actions.extend(
+                decide(
+                    driver, [ProcessExit(proc_id=f"p-{node}", context=f"node={node}", returncode=0)]
+                )
+            )
+        timeouts_by_node = {
+            e.data["node_id"]: e.data.get("timeout_seconds")
+            for e in actions
+            if isinstance(e, EmitEvent) and e.event_type == "node_history"
+        }
+        assert timeouts_by_node == {"a": 7200, "b": 300, "c": None}
+
+    @staticmethod
+    def test_node_history_omits_timeout_seconds_when_unconfigured(tmp_path):
+        """未配置 timeouts 段的图：档案事件不带时限字段（规则对该图关闭）。"""
+        driver = build_driver(tmp_path, [bash_node("a", "true", acceptance={"enabled": False})])
+        decide(driver)
+        actions = decide(driver, [ProcessExit(proc_id="p1", context="node=a", returncode=0)])
+        history = next(
+            e for e in actions if isinstance(e, EmitEvent) and e.event_type == "node_history"
+        )
+        assert "timeout_seconds" not in history.data

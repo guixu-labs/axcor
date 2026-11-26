@@ -78,8 +78,13 @@ from workflow_controller.core.reviewer_runner import DriverReviewerRunner
 from workflow_controller.core.reviewer_service import ReviewerService
 from workflow_controller.core.runs import RunKind, RunNotFoundError, RunStore
 from workflow_controller.core.session_run_affiliation import SessionRunAffiliationService
+from workflow_controller.core.session_traceback import SessionTracebackHost
+from workflow_controller.core.session_workspace import SessionWorkspaceHost
 from workflow_controller.core.subagent_tracker import SubagentTracker
+from workflow_controller.core.workspace.residue_reaper import WorkspaceResidueReaper
 from workflow_controller.driver.hooks import (
+    BarrierOutcome,
+    BarrierProceed,
     CodexHookConfigWriter,
     DriverHooks,
     SubagentProgressBridge,
@@ -137,6 +142,10 @@ class Orchestrator:
     _reviewer_mode: str
     _stop_block_counts: dict[str, int]
     _stop_block_limit: int
+    # 派发屏障端口：run 平面注册后会话宿主把屏障请求转交协调器队列
+    _dispatch_barrier_port: Callable[..., Awaitable[BarrierOutcome]] | None
+    # 子代理启动端口：run 平面注册后据派发准入回填组检查点子会话映射
+    _subagent_start_port: Callable[..., Awaitable[None]] | None
 
     def __init__(
         self,
@@ -157,12 +166,64 @@ class Orchestrator:
         self._affiliation: SessionRunAffiliationService | None = (
             None  # 懒建（affiliation 属性），随 run_store
         )
+
+        # 单会话工作区宿主：traceback 工作区模式的会话树/终态同步/实时视图
+        async def _async_pool_get(session_id: str) -> Session | None:
+            return self.pool.get(session_id)
+
+        self._session_workspaces = SessionWorkspaceHost(
+            checkpoint_db_path=lambda: self.run_store.db_path,
+            resolve_session=_async_pool_get,
+            persist_session=self.pool.persist,
+            stop_session=self.stop_session,
+            start_resumed_session=self.start_session_with_resume,
+        )
+        # 历史检查点兼容面：快照代检查点读取/预览/重放与 session 导入
+        self._session_traceback = SessionTracebackHost(
+            checkpoint_db_path=lambda: self.run_store.db_path,
+            resolve_session=_async_pool_get,
+            load_roster_session=self.event_router.get_session,
+            session_workspaces=self._session_workspaces,
+            start_resumed_session=self.start_session_with_resume,
+            create_session=self.pool.create,
+            persist_session=self.pool.persist,
+            store_events=self.event_router.store_many,
+            default_runtime=lambda: self.config.runtime,
+            resolve_runtime=self._resolve_runtime_name,
+            work_dir=lambda: self.default_project_dir,
+            write_hook_config=self.generate_hook_config,
+        )
         # 激活后挂靠钩子：显式归属在 _runtime_lock 临界区内落账的唯一通道
         self._post_attach_hook: Callable[[Session], Awaitable[None]] | None = None
         self.register_post_attach_hook(self._attach_on_activate)
+        # 工作区残留 TTL 清理器：崩溃残留树/过期检查点行/fork 孤儿目录的兜底
+        self._residue_reaper = WorkspaceResidueReaper(
+            checkpoint_db_path=lambda: self.run_store.db_path,
+            list_sessions=self.pool.list_sessions,
+            scan_roots=lambda: [self.default_project_dir],
+        )
+        # 启动期清理任务（best-effort 后台跑一轮，不阻塞启动）
+        self._residue_reaper_task: asyncio.Task[None] | None = None
         self.auth_rotator: AuthRotator | None = None
         self._limit_detector: LimitDetector | None = None
         self._reviewer_runner: DriverReviewerRunner | None = None
+
+    @property
+    def session_workspaces(self) -> SessionWorkspaceHost:
+        """单会话工作区宿主（run 平面查询/回滚面与实时视图消费）。"""
+        return self._session_workspaces
+
+    @property
+    def session_traceback(self) -> SessionTracebackHost:
+        """历史检查点兼容面（快照代读取/预览/重放与 session 导入）。"""
+        return self._session_traceback
+
+    @staticmethod
+    def _resolve_runtime_name(runtime: str | None) -> str:
+        """runtime 名解析（环境变量优先，与驱动工厂同一优先序）。"""
+        from workflow_controller.driver.factory import resolve_runtime as _resolve_runtime
+
+        return _resolve_runtime(runtime)
 
     @property
     def plugin_registry(self) -> PluginRegistry:
@@ -178,6 +239,19 @@ class Orchestrator:
     def default_project_dir(self) -> Path:
         """守护进程存储标识（启动期定格，run 根等记录路径的家）。"""
         return self._default_project_dir
+
+    async def _run_residue_reaper(self) -> None:
+        """启动期残留清理任务体：best-effort 跑一轮，异常只记日志。"""
+        try:
+            await self._residue_reaper.reap()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("启动期残留清理失败（不影响启动）", exc_info=True)
+
+    async def reap_workspace_residue(self) -> dict[str, Any]:
+        """显式触发一轮工作区残留清理（启动期自动清理的手动等价物）。"""
+        return await self._residue_reaper.reap()
 
     @property
     def run_store(self) -> RunStore:
@@ -323,7 +397,11 @@ class Orchestrator:
         self.pool.load_sessions()
         self.bus.start()
         self.bus.observe(EventType.ITERATION_START, self._register_session)
+        # 节点时钟账本恢复先于规则接入：崩溃开段按冻结收段、已用时间保留
+        await self.watchdog.restore_node_clocks()
         self.watchdog.start()
+        # 残留清理后台跑一轮（池已装载 → 会话存活可判定；best-effort 不阻塞启动）
+        self._residue_reaper_task = asyncio.create_task(self._run_residue_reaper())
         if self.config.hook_server.enabled:
             self._hook_server = self._build_hook_server()
             self._plugin_registry.load(self, self._hook_server)
@@ -424,6 +502,12 @@ class Orchestrator:
         隐式归属连行带 run 同事务回收；显式 run 的成员行是调用方的记录，
         不连坐删（只清 sessions 表行）。删除即清账，不等 boot 回退。
         """
+        # 单会话托管工作区随删除整树回收（对已同步树为幂等空操作）
+        with contextlib.suppress(Exception):
+            await self._session_workspaces.cleanup_session(session_id)
+        # 重放 fork 目录随删除回收（内存映射缺失时回落持久化溯源行）
+        with contextlib.suppress(Exception):
+            await self._session_traceback.cleanup_fork(session_id)
         # 直查 _affiliation 而非属性：未铸过归属时不触记录（懒建纪律）。
         if self._affiliation is None:
             return
@@ -489,7 +573,7 @@ class Orchestrator:
         initial_current_iteration: int | None = None,
     ) -> Session:
         """Start a session, optionally resuming a seeded SDK session and carrying
-        plugin metadata (e.g. agent_traceback's fork origin).
+        plugin metadata (e.g. checkpoint replay fork origin).
 
         Like :meth:`start_session_with_config` but, BEFORE activation, pre-sets the
         SDK session id to resume (the seeded session) and merges ``plugin_metadata``
@@ -628,6 +712,58 @@ class Orchestrator:
         if loop is not None and loop.is_current_id(session_id):
             loop.mark_reviewer_let_exit()
 
+    def set_dispatch_barrier_port(self, port: Callable[..., Awaitable[BarrierOutcome]]) -> None:
+        """登记派发屏障端口（run 平面注册；此后新激活会话接线屏障回调）。"""
+        self._dispatch_barrier_port = port
+
+    def set_subagent_start_port(self, port: Callable[..., Awaitable[None]]) -> None:
+        """登记子代理启动端口（run 平面注册；此后新激活会话接线回填回调）。"""
+        self._subagent_start_port = port
+
+    async def _handle_subagent_start(self, session_id: str, data: dict[str, Any]) -> None:
+        """子代理启动回执分发：先记入 tracker，再尽力回填组检查点映射。"""
+        await self._subagents.on_start(session_id, data)
+        if self._session_workspaces.owns(session_id):
+            with contextlib.suppress(Exception):
+                await self._session_workspaces.record_subagent_start(session_id, data)
+            return
+        port = self._subagent_start_port
+        if port is not None:
+            with contextlib.suppress(Exception):
+                await port(session_id, data)
+
+    async def _handle_dispatch_barrier(
+        self,
+        session_id: str,
+        kind: str,
+        data: dict[str, Any],
+    ) -> BarrierOutcome:
+        """屏障回调入口：单会话树优先（宿主自任确认方），否则转 run 平面端口。"""
+        from workflow_controller.driver.factory import resolve_runtime
+
+        session = self.pool.get(session_id)
+        runtime = ""
+        if session is not None:
+            runtime = resolve_runtime(session.config.runtime or self.config.runtime)
+        if session is not None and self._session_workspaces.owns(session_id):
+            return await self._session_workspaces.submit_dispatch_barrier(
+                session_id,
+                kind,
+                data,
+                runtime=runtime,
+                workspace=str(data.get("workspace") or "writer"),
+            )
+        port = self._dispatch_barrier_port
+        if port is None:
+            return BarrierProceed()
+        return await port(
+            session_id,
+            kind,
+            data,
+            runtime=runtime,
+            workspace=str(data.get("workspace") or "writer"),
+        )
+
     def make_driver_hooks(
         self,
         mig_session_id: str,
@@ -653,6 +789,13 @@ class Orchestrator:
                 self._codex_hooks_are_managed,
                 mig_session_id,
             )
+        # 派发屏障回调：run 平面端口注册或单会话工作区接入后才接线
+        # （两者都缺席时驱动层零变化）
+        before_side_effect_tool = None
+        before_subagent_dispatch = None
+        if self._dispatch_barrier_port is not None or self._session_workspaces.owns(mig_session_id):
+            before_side_effect_tool = partial(self._handle_dispatch_barrier, kind="side_effect")
+            before_subagent_dispatch = partial(self._handle_dispatch_barrier, kind="dispatch")
         return DriverHooks(
             session_id=mig_session_id,
             on_pre_tool_use=self._handle_driver_pre_tool_use,
@@ -666,9 +809,11 @@ class Orchestrator:
                 data.get("last_assistant_message", "") or "",
                 block_key=sid,
             ),
-            on_subagent_start=self._subagents.on_start,
+            on_subagent_start=self._handle_subagent_start,
             on_subagent_progress=self._subagents.on_progress,
             on_subagent_stop=self._subagents.on_stop,
+            before_side_effect_tool=before_side_effect_tool,
+            before_subagent_dispatch=before_subagent_dispatch,
             subagent_progress_bridge=SubagentProgressBridge(),
             # opencode gate (AskUserQuestion-equivalent); ignored by cc drivers.
             on_gate_question=self._resolve_gate_question,
@@ -929,13 +1074,18 @@ class Orchestrator:
         session = self.pool.get(session_id)
         if session is None:
             raise ValueError(f"session {session_id} 不在池内，无法续跑")
-        await self.stop_session(session_id)
-        await self.pool.resume(session_id)
-        session.settle_active()
-        session.active_seconds = 0.0
-        if prompt:
-            await self.pool.inject_prompt(session_id, prompt)
-        await self.resume_session(session_id)
+        # 续跑窗内的停止是瞬态：工作区终态收口跳过（会话将继续）
+        self._continuing_sessions.add(session_id)
+        try:
+            await self.stop_session(session_id)
+            await self.pool.resume(session_id)
+            session.settle_active()
+            session.active_seconds = 0.0
+            if prompt:
+                await self.pool.inject_prompt(session_id, prompt)
+            await self.resume_session(session_id)
+        finally:
+            self._continuing_sessions.discard(session_id)
 
     # ── prompt overlay registry — delegates to OverlayRegistry ─────────
     # (opencode-only; SDK/CLI get empty via DriverHooks.get_overlays.)
@@ -971,6 +1121,34 @@ class Orchestrator:
         """成员定向注入薄原语（注入 + 手工操作留痕）。"""
         await self.pool.inject_prompt(session_id, prompt)
         await self.bus.emit(_build_manual_prompt_event(session_id, prompt))
+
+    async def get_session_live_view(
+        self, session_id: str, path: str | None = None
+    ) -> dict[str, Any]:
+        """单会话托管工作区的只读实时视图（目录树或单文件内容）。"""
+        return await self._session_workspaces.live_view(session_id, path)
+
+    async def list_session_workspace_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+        """单会话树的检查点查询（回滚入口的核对面）。"""
+        return await self._session_workspaces.list_checkpoints(session_id)
+
+    async def restore_session_subagent(
+        self,
+        session_id: str,
+        *,
+        checkpoint_id: str,
+        expected_epoch: int,
+        client_op_id: str,
+        replay_dispatch: bool = False,
+    ) -> dict[str, Any]:
+        """单会话子代理回滚：组检查点恢复并绑定恢复会话（宿主为确认方）。"""
+        return await self._session_workspaces.restore_session_subagent(
+            session_id,
+            checkpoint_id=checkpoint_id,
+            expected_epoch=expected_epoch,
+            client_op_id=client_op_id,
+            replay_dispatch=replay_dispatch,
+        )
 
     async def apply_session_overrides(self, session_id: str, overrides: Mapping[str, Any]) -> None:
         """成员配置部分更新（新 attempt 上下文刷新用），改后即持久化。"""
@@ -1049,6 +1227,12 @@ class Orchestrator:
                 await step()
             except Exception:
                 logger.exception("run-plane shutdown step failed; continuing")
+        # 0.5 启动期残留清理任务收尾（在途即取消，防关停期仍在扫盘）
+        if self._residue_reaper_task is not None:
+            self._residue_reaper_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._residue_reaper_task
+            self._residue_reaper_task = None
         # 1. Stop every per-session runtime before stopping drivers.
         runtime_tasks = list(self._loop_tasks.values())
         for loop in list(self._loops.values()):
@@ -1077,6 +1261,8 @@ class Orchestrator:
             self._reviewer = None
         if self._hook_server:
             await self._hook_server.stop_server()
+        # watchdog 巡检任务与账本连接收尾先于总线停止（巡检回调依赖总线）
+        await self.watchdog.stop()
         await self.bus.stop()
 
     def generate_hook_config(self, project_dir: Path | None = None) -> None:
@@ -1141,6 +1327,46 @@ class Orchestrator:
             on_query_start=self._subagents.clear_session,
         )
 
+    async def _maybe_finalize_session_workspace(self, session_id: str) -> None:
+        """会话终局的单会话工作区收口：终态同步并回收（瞬时窗口跳过）。
+
+        重启窗与超时续跑窗内的终态是瞬态（会话将继续），不在此时收口；
+        收口失败保留托管终态待查（异常留痕，不影响会话结局）。
+        """
+        if session_id in self._restarting_sessions or session_id in self._continuing_sessions:
+            return
+        if not self._session_workspaces.owns(session_id):
+            return
+        session = self.pool.get(session_id)
+        if session is None or session.state not in (
+            SessionState.COMPLETED,
+            SessionState.STOPPED,
+            SessionState.FAILED,
+        ):
+            return
+        try:
+            await self._session_workspaces.finalize_session(session_id)
+        except Exception:
+            logger.exception("会话 %s 工作区终态收口失败，托管终态保留待查", session_id)
+
+    async def _session_workspace_enabled(self, session: Session) -> bool:
+        """单会话工作区模式判定：开关在且非 run 成员（隐式归属除外）。"""
+        config = session.config.traceback
+        if config is None or not config.enabled:
+            return False
+        if self._session_workspaces.owns(session.id):
+            return True  # 恢复会话等派生身份：接续同一棵托管树
+        if self._affiliation is None:
+            return True
+        affiliation = self._affiliation.resolve(session.id)
+        if affiliation is None:
+            return True
+        try:
+            kind = (await self.run_store.get(affiliation.run_id)).kind
+        except RunNotFoundError:
+            return False  # 归属 run 已不在账：按 run 平面管辖处理，不在会话侧建树
+        return kind == RunKind.IMPLICIT
+
     async def _run_session_runtime(
         self,
         session_id: str,
@@ -1151,6 +1377,7 @@ class Orchestrator:
             await loop.run()
         finally:
             await self._close_file_change_contexts(session_id)
+            await self._maybe_finalize_session_workspace(session_id)
             async with self._runtime_lock:
                 if self._loops.get(session_id) is loop:
                     self._loops.pop(session_id, None)
@@ -1193,6 +1420,10 @@ class Orchestrator:
         # global provider/reviewer changes cannot affect this session later.
         await self._ensure_session_snapshots(session)
         await self._validate_session_provider_bindings(session)
+        # 单会话工作区接入：cwd 指向托管工作区须先于驱动挂钩（屏障接线
+        # 依据注册表判定），未开启 traceback 的会话零变化
+        if await self._session_workspace_enabled(session):
+            await self._session_workspaces.prepare_session(session)
         self._refresh_claude_cli_hooks(session.config.runtime, Path(session.config.cwd))
         # 状态迁移事件接线：钩子随激活安装，session 终身有效（去激活后仍可发射）
         session.set_state_change_hook(self._schedule_session_state_event)
@@ -1444,6 +1675,9 @@ class Orchestrator:
                 await reviewer.stop()
         self._overlays.clear_subagent_hint(session.id)
         self._overlays.clear_session_instruction(session.id)
+        # 激活失败（含建区失败）：半成品托管树一并回收
+        with contextlib.suppress(Exception):
+            await self._session_workspaces.cleanup_session(session.id)
         self.pool.remove(session.id)
         # 创建入口铸的归属随 sessions 表行同事务回滚；显式段激活前未落账，discard 幂等。
         # 直查 _affiliation 而非属性：未铸过归属时不触记录（懒建纪律）。
@@ -2267,6 +2501,8 @@ class Orchestrator:
         self._loop_tasks = {}
         # session 平面重启窗（stop→重激活）：窗口内终态为瞬态，收尾判定据此短路
         self._restarting_sessions = set()
+        # 超时续跑窗（stop→resume）：窗口内终态同样为瞬态，工作区不收口
+        self._continuing_sessions = set()
         self._runtime_lock = asyncio.Lock()
         self._single_loop = None
         self._hook_server = None
@@ -2281,14 +2517,20 @@ class Orchestrator:
         self._reviewer_interceptor = None
         self._hook_decision_emitter = None
         self._cli_to_workflow_controller_session = {}
+        # 派发屏障端口：run 平面（RunCoordinator）注册；未注册时驱动层
+        # 屏障回调不接线（旧路径零变化）
+        self._dispatch_barrier_port = None
+        self._subagent_start_port = None
 
     def _init_plane_integrations(self) -> None:
         """平面集成组件初始化：watchdog/subagent/overlay/文件变更（__init__ 专用）。"""
-        # watchdog（subagent 异常检测通用能力，规则以事件库订阅者接入）
+        # watchdog（subagent 异常检测通用能力，规则以事件库订阅者接入）；
+        # 账本锚守护进程库 events.db（节点累计时钟的重启保留面）
         self.watchdog = WatchdogCore(
             self.config.watchdog,
             self.bus,
             self.pool,
+            self.event_router.db_path,
         )
         # In-flight sub-agent tracking + SUBAGENT_* event emission + precise
         # WAITING_RETRY wake (dc370e6 overlay 剥离相同手法抽出).

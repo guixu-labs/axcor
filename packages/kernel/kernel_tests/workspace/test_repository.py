@@ -201,6 +201,42 @@ async def test_first_layer_scope_materializes_writer_local_from_seed(
     assert parent == refs.integration_head
 
 
+async def test_scope_key_with_colon_maps_to_valid_branch(tmp_path: Path) -> None:
+    """子图节点式作用域键（含冒号）：分支名与目录名按转义键映射，作用域键不变。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    _make_user_workspace(root)
+    repository, refs = await _imported_repository(root)
+
+    workspace = await repository.create_scope_workspace(
+        "gen:child-w1", base_commit=refs.integration_head
+    )
+
+    assert workspace.scope_key == "gen:child-w1"
+    assert workspace.branch == "scope/gen%3Achild-w1"
+    assert workspace.path == repository.workspaces_dir / "gen%3Achild-w1"
+    _run_git(["check-ref-format", "--branch", workspace.branch], repository.repo_dir)
+    assert await repository.resolve_ref(f"refs/heads/{workspace.branch}") == workspace.base_commit
+
+
+async def test_scope_key_with_escape_sequence_stays_distinct(tmp_path: Path) -> None:
+    """键自带 %XX 字样不与含冒号键的转义结果冲突。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    _make_user_workspace(root)
+    repository, refs = await _imported_repository(root)
+
+    colon = await repository.create_scope_workspace("a:b-w1", base_commit=refs.integration_head)
+    literal = await repository.create_scope_workspace("a%3Ab-w1", base_commit=refs.integration_head)
+
+    assert colon.branch == "scope/a%3Ab-w1"
+    assert literal.branch == "scope/a%253Ab-w1"
+    assert colon.path != literal.path
+    assert await repository.resolve_ref(
+        f"refs/heads/{colon.branch}"
+    ) != await repository.resolve_ref(f"refs/heads/{literal.branch}")
+
+
 async def test_import_baseline_without_strippable_paths_keeps_line_at_seed(
     tmp_path: Path,
 ) -> None:

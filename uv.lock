@@ -12,7 +12,6 @@ members = [
     "axcor",
     "workflow-controller-hookserver",
     "workflow-controller-kernel",
-    "workflow-controller-plugin-agent-traceback",
     "workflow-controller-plugin-breather",
     "workflow-controller-plugin-fake-driver",
     "workflow-controller-plugin-file-provenance",
@@ -307,7 +306,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "types-pyyaml" },
-    { name = "workflow-controller-plugin-agent-traceback" },
     { name = "workflow-controller-plugin-breather" },
     { name = "workflow-controller-plugin-fake-driver" },
     { name = "workflow-controller-plugin-file-provenance" },
@@ -329,7 +327,6 @@ dev = [
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "ruff", specifier = ">=0.8,<0.16" },
     { name = "types-pyyaml", specifier = ">=6.0" },
-    { name = "workflow-controller-plugin-agent-traceback", editable = "packages/plugins/agent-traceback" },
     { name = "workflow-controller-plugin-breather", editable = "packages/plugins/breather" },
     { name = "workflow-controller-plugin-fake-driver", editable = "packages/plugins/fake-driver" },
     { name = "workflow-controller-plugin-file-provenance", editable = "packages/plugins/file-provenance" },
@@ -2216,17 +2213,6 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 test = [{ name = "workflow-controller-plugin-fake-driver", editable = "packages/plugins/fake-driver" }]
-
-[[package]]
-name = "workflow-controller-plugin-agent-traceback"
-version = "0.1.0"
-source = { editable = "packages/plugins/agent-traceback" }
-dependencies = [
-    { name = "workflow-controller-kernel" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "workflow-controller-kernel", editable = "packages/kernel" }]
 
 [[package]]
 name = "workflow-controller-plugin-breather"

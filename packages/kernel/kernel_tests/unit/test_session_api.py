@@ -129,7 +129,7 @@ def test_running_frozen_last_activity_still_counts():
 
 def test_birth_traceback_populated_from_session():
     """SessionInfo.from_session must expose plugin_metadata (fork origin) for
-    fork visualization (设计 agent-traceback §5.3 / §7.2).
+    fork visualization（birth_traceback 溯源格式的内核承载面）.
     """
     created = datetime.now(tz=UTC)
     s = _fake_session(SessionState.COMPLETED, created_at=created, last_activity=created)

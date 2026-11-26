@@ -40,7 +40,7 @@ import time
 import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
 from workflow_controller.logging_config import emit_stdout
 
@@ -69,6 +69,42 @@ ToolNotificationHandler = Callable[[str, dict[str, Any]], Awaitable[None]]
 # dict ``{"questions": [...]}``; the orchestrator parses it. Driver-layer
 # primitive (dict, not core's AskQuestion) to avoid a layer leak.
 GateQuestionHandler = Callable[[str, dict[str, Any]], Awaitable[str]]
+
+# 前置屏障结果：放行（task 场景携带子代理工作区 cwd 供注入）或拒绝。
+BarrierOutcome = Union["BarrierProceed", "BarrierDeny"]
+
+# ⑤ 副作用工具前置屏障：写文件类/Bash 工具执行前仲裁，副作用尚未发生。
+SideEffectBarrierHandler = Callable[[str, dict[str, Any]], Awaitable[BarrierOutcome]]
+
+# ① 派发前置屏障：task 真正创建子代理前仲裁，可注入子代理工作区 cwd。
+DispatchBarrierHandler = Callable[[str, dict[str, Any]], Awaitable[BarrierOutcome]]
+
+# 副作用工具分类（⑤ 的拦截面）：写文件类工具与 Bash 命令。
+SIDE_EFFECT_TOOL_NAMES = frozenset(
+    {
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "Patch",
+        "apply_patch",
+        "Bash",
+    }
+)
+
+# task 派发工具名（与 plugin.dispatch_barrier 的 DISPATCH_TOOL_NAMES 对齐的驱动层词面）
+DISPATCH_TOOL_NAMES = frozenset({"Task", "Agent"})
+
+
+def is_side_effect_tool(tool_name: str) -> bool:
+    """工具是否属副作用类（组检查点须先于其发生）。"""
+    return tool_name in SIDE_EFFECT_TOOL_NAMES
+
+
+def is_dispatch_tool(tool_name: str) -> bool:
+    """工具是否属子代理派发类。"""
+    return tool_name in DISPATCH_TOOL_NAMES
+
 
 # () -> {"subagent_hints": {type: [hint, ...]}, "instructions": [...]}.
 # Overlay seam — only opencode consumes; SDK/CLI get an empty snapshot.
@@ -111,6 +147,21 @@ class SubagentProgressBridge:
             await self._monitor.notify_subagent_stopped(child_thread_id)
 
 
+@dataclass(frozen=True)
+class BarrierProceed:
+    """屏障放行结果：task 场景携带子代理工作区 cwd 供注入。"""
+
+    child_cwd: str | None = None
+
+
+@dataclass(frozen=True)
+class BarrierDeny:
+    """屏障拒绝结果：reason 进入工具失败面，fault 为收口语义（可选）。"""
+
+    reason: str
+    fault: str | None = None
+
+
 @dataclass
 class DriverHooks:
     """Hook callbacks the orchestrator hands to a driver for one session."""
@@ -124,6 +175,10 @@ class DriverHooks:
     on_subagent_start: SubagentHandler | None = None
     on_subagent_progress: SubagentHandler | None = None
     on_subagent_stop: SubagentHandler | None = None
+    # ⑤ 副作用工具前置屏障：副作用发生前仲裁（组检查点先于本副作用）。
+    before_side_effect_tool: SideEffectBarrierHandler | None = None
+    # ① 派发前置屏障：task 真正创建前仲裁并返回子代理工作区 cwd。
+    before_subagent_dispatch: DispatchBarrierHandler | None = None
     subagent_progress_bridge: SubagentProgressBridge | None = None
     # opencode only (cc has native AskUserQuestion). When set, the opencode
     # driver starts a per-query in-process MCP gate server (see opencode_gate)

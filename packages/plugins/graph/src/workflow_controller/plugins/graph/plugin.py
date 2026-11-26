@@ -161,6 +161,10 @@ class GraphDriverFactory:
         """从快照恢复驱动。"""
         return self._plugin().restore_driver(run, snapshot)
 
+    def reload_definition(self, run: Any, driver: Any, source: Path) -> dict[str, Any]:
+        """重读当前工作流定义（工厂侧 I/O）：翻译与子图预案，不换驱动实例。"""
+        return self._plugin().reload_definition(run, driver, Path(source))
+
     def _plugin(self) -> Any:
         """解析当前活跃插件实例。"""
         plugin = self._plugin_lookup()
@@ -309,6 +313,47 @@ class GraphPlugin(Plugin):
             for stale in list(self._drivers)[:-_DRIVER_CACHE_LIMIT]:
                 del self._drivers[stale]
 
+    def reload_definition(self, run: Any, driver: Any, source: Path) -> dict[str, Any]:
+        """重读工作流源并翻译为换装载荷：读文件在本层，换装决策在驱动侧。
+
+        翻译沿用驱动快照里的原始入参变量与工作目录注入，等价于按当前
+        文件内容重走一遍创建期翻译；已合并子图的重建预案一并备好。
+        """
+        snap = driver.snapshot()
+        render_vars = dict(snap.get("variables") or {})
+        user_prompt = snap.get("user_prompt_path")
+        work_dir = snap.get("work_dir")
+        if user_prompt and work_dir:
+            render_vars.update(WORK_DIR=work_dir, USER_PROMPT=user_prompt)
+        program = translator.translate_program(source, render_vars, source.parent)
+        return {
+            "program": program,
+            "subgraph_plans": self._reload_subgraph_plans(driver, program),
+        }
+
+    def _reload_subgraph_plans(self, driver: Any, program: Any) -> list[tuple[str, list[dict]]]:
+        """已合并子图的重建预案：按新程序 DAG 定位生成器并校验子图 yaml 一致。
+
+        子图 yaml 缺失或与已合并节点不一致时显式拒绝重载——恢复路径允许
+        降级失败续跑，重载不允许（半新半旧的定义现场比失败更糟）。
+        """
+        plans: list[tuple[str, list[dict]]] = []
+        for spec in scheduler.subgraph_restore_specs(program.dag, driver.state, driver.variables):
+            sub_config = self._load_subgraph_yaml(
+                driver.work_dir,
+                spec.node["id"],
+                spec.output_rel,
+            )
+            prefixed = (
+                scheduler.restored_subgraph_plan(spec.node["id"], spec.sub_ids, sub_config)
+                if sub_config is not None
+                else None
+            )
+            if prefixed is None:
+                raise ValueError(f"子图 yaml 缺失或与已合并节点不一致，拒绝重载：{spec.node['id']}")
+            plans.append((spec.node["id"], prefixed))
+        return plans
+
     def _apply_provider_overrides(self, opts: dict[str, Any]) -> None:
         """create 供给的配置修正：provider_index 整数化、model_pinned 缺省推导。"""
         provider_index = opts.get("provider_index")
@@ -444,6 +489,7 @@ class GraphPlugin(Plugin):
             workflow_source=Path(run.program_ref) if run.program_ref else None,
             **pick_runner_options(dict(blob.get("options") or {})),
         )
+        driver.resume_workspace_seq(int(blob.get("workspace_seq", 0) or 0))
         if not user_prompt_path.exists():
             self._recreate_user_prompt(
                 run_id,
@@ -519,6 +565,7 @@ def _state_payload(graph_id: str, blob: Mapping[str, Any]) -> dict[str, Any]:
         "rollbacks": state.get("rollbacks", {}),
         "rollback_edges": state.get("rollback_edges", []),
         "retired_instances": state.get("retired_instances", {}),
+        "operations": state.get("operations", {}),
     }
 
 

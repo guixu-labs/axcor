@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
 
 # 节点终态集：依赖满足判定的基准（stopped 不在其中——暂停语义，续跑可恢复）
 _TERMINAL = {"passed", "failed", "skipped"}
@@ -55,6 +55,10 @@ def default_node() -> dict[str, Any]:
         "subgraph_node_ids": None,
         "subgraph_nodes": None,
         "subgraph_output": None,
+        # 节点作用域工作区映射：恢复后续跑与重试废弃的账面依据
+        "workspace_scope_id": None,
+        "workspace_scope_epoch": 0,
+        "workspace_path": None,
     }
 
 
@@ -211,6 +215,14 @@ class GraphState:
     def clear_session_id(self, node_id: str) -> None:
         self._set_node_field(node_id, "workflow_controller_session_id", None)
 
+    def node_session_id(self, node_id: str) -> str | None:
+        """节点档案的执行会话绑定；未绑定为 None。"""
+        return self._data["nodes"][node_id].get("workflow_controller_session_id")
+
+    def set_node_session_id(self, node_id: str, session_id: str) -> None:
+        """回填节点执行会话绑定（恢复会话到达时，不改节点状态）。"""
+        self._set_node_field(node_id, "workflow_controller_session_id", session_id)
+
     def set_verify_session_id(self, node_id: str, session_id: str | None) -> None:
         self._set_node_field(node_id, "verify_session_id", session_id)
 
@@ -219,6 +231,42 @@ class GraphState:
 
     def clear_verify_session_id(self, node_id: str) -> None:
         self._set_node_field(node_id, "verify_session_id", None)
+
+    def set_node_workspace(
+        self,
+        node_id: str,
+        scope_id: str,
+        scope_epoch: int,
+        workspace_path: str,
+    ) -> None:
+        """登记节点的作用域工作区映射（建区回执到达时写入）。"""
+        with self._lock:
+            info = self._data["nodes"][node_id]
+            info["workspace_scope_id"] = scope_id
+            info["workspace_scope_epoch"] = scope_epoch
+            info["workspace_path"] = workspace_path
+        self._checkpoint()
+
+    def clear_node_workspace(self, node_id: str) -> None:
+        """清节点的作用域映射（旧作用域废弃后不再可用）。"""
+        with self._lock:
+            info = self._data["nodes"][node_id]
+            info["workspace_scope_id"] = None
+            info["workspace_scope_epoch"] = 0
+            info["workspace_path"] = None
+        self._checkpoint()
+
+    def node_workspace(self, node_id: str) -> tuple[str, int, str] | None:
+        """节点档案的作用域映射 (scope_id, epoch, path)；未建区为 None。"""
+        info = self._data["nodes"][node_id]
+        scope_id = info.get("workspace_scope_id")
+        if not scope_id:
+            return None
+        return (
+            scope_id,
+            int(info.get("workspace_scope_epoch", 0)),
+            info.get("workspace_path") or "",
+        )
 
     def clear_output(self, node_id: str) -> None:
         self._set_node_field(node_id, "output", None)
@@ -357,6 +405,31 @@ class GraphState:
                     "to_gen": to_gen,
                 }
             )
+        self._checkpoint()
+
+    # ── 回滚操作账（异步确认链的状态源，随快照持久化）──────────
+
+    def operations(self) -> dict[str, dict[str, Any]]:
+        """全部回滚操作记录（深拷贝；变更经 upsert_operation 回写）。"""
+        with self._lock:
+            return copy.deepcopy(self._data.get("operations") or {})
+
+    def operation(self, operation_id: str) -> dict[str, Any] | None:
+        """按标识取单条操作记录（深拷贝）；不存在返回 None。"""
+        record = (self._data.get("operations") or {}).get(operation_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    def operation_by_client(self, client_op_id: str) -> dict[str, Any] | None:
+        """按客户端幂等键取操作记录（同键冲突请求在受理入口拒绝）。"""
+        for record in (self._data.get("operations") or {}).values():
+            if record.get("client_op_id") == client_op_id:
+                return copy.deepcopy(record)
+        return None
+
+    def upsert_operation(self, record: Mapping[str, Any]) -> None:
+        """写入/覆盖一条操作记录（按 operation_id 幂等）。"""
+        with self._lock:
+            self._data.setdefault("operations", {})[str(record["operation_id"])] = dict(record)
         self._checkpoint()
 
     # ── Queries ───────────────────────────────────────────────────

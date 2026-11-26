@@ -49,7 +49,6 @@ BASELINE: set[tuple[str, str]] = {
     ("core/orchestrator.py", "_single_loop"),
     ("core/orchestrator.py", "_reconcile_interval"),
     ("plugins/file_provenance/plugin.py", "_ctx"),
-    ("plugins/agent_traceback/plugin.py", "_ctx"),
     ("plugins/breather/context.py", "_auth_rotator"),
     ("driver/claude_sdk.py", "_process"),
     ("web/console.py", "_mark_routes_changed"),

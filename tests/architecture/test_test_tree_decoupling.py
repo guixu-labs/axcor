@@ -38,7 +38,6 @@ _KERNEL_TEST_DIRS = (
 )
 _PLUGIN_TEST_DIRS = (
     "breather",
-    "plugins/agent_traceback",
     "plugins/graph",
     "plugins/file_provenance",
     "plugins/staged_pipeline",

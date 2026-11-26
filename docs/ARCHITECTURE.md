@@ -587,28 +587,18 @@ def _register_observers(self, ctx):
 def _register_interceptors(self, ctx):
     ctx.bus.intercept("iteration_boundary", self._on_iteration_boundary_intercept, priority=10)
 
-# agent_traceback
-def install(self, ctx):
-    super().install(ctx)                       # _ctx + helpers（宿主能力端口经 ctx.services 取）
-    self._reap_orphan_fork_roots()             # 启动期一次性扫 tempdir 清孤儿（跳过活动 fork_root）
-
-def uninstall(self):
-    self._detach_bus_handlers()                # 从 bus 注销 interceptor/observer（reload 不泄漏）
-
+# staged_pipeline
 def _register_interceptors(self, ctx):
-    ctx.bus.intercept(EventType.SUBAGENT_START, self._on_subagent_start, priority=10)  # subagent 启动前冻文件态
-    ctx.bus.intercept("session_delete", self._on_session_delete, priority=10)   # inline 清理
-def _register_observers(self, ctx):
-    ctx.bus.observe("session_complete", self._on_session_complete)  # fire-and-forget
+    ctx.bus.intercept("iteration_boundary", self._on_iteration_boundary_intercept, priority=10)
 ```
 
-> **Claude CLI 检查点重放**：`agent_traceback` 先根据源会话配置、原生 session ID 和 JSONL 文件判定源 runtime；通过 `PluginServices` 的 runtime 解析端口校验只使用相同 runtime 续跑。Claude CLI 源会话从原项目的 JSONL 找到检查点前匹配的 Agent 调用，截断后改写 session ID 与路径，写入 fork 独立的 `CLAUDE_CONFIG_DIR`；最终状态检查点保留完整对话。OpenCode 仍走隔离 `opencode.db`。重放弹窗查询源 runtime 作默认值，后端再次校验，防止用另一 runtime 读取错误格式的对话。Claude CLI 非正常退出应带退出码与 stderr 原因上报；用户主动停止时不报 CLI 失败。
+> **检查点重放与会话导入（内核能力）**：单会话回溯（检查点、重放、导入）由内核 `core/session_traceback.py` 与 `core/restore/` 承载——重放按源会话配置、原生 session ID 与 L2 文件判定源 runtime 并校验同 runtime 续跑；Claude 系源会话从 JSONL 找到检查点前匹配的 Agent 调用，截断后改写 session ID 与路径，写入 fork 独立的配置目录；OpenCode 源走隔离 `opencode.db`。历史快照仓（`.workflow-controller/snapshots`）按目录约定直连读取，旧 `checkpoints` 表经兼容读取器访问。
 
-> **session 删除清理链路**：`SessionAPI.delete` 在 `pool.remove` 前捕获 `birth_traceback` 透传进 `session_delete` 事件 data，插件 `_on_session_delete` 据此即时清理——
-> - **重放 fork session**（`birth_traceback.fork_root`）：先无条件 pop in-memory `_fork_roots`，再按事件 data → in-memory 值 → `_read_birth_traceback` 全库扫描选择目录；rmtree 隔离 tempdir（~2GB）前做路径安全校验（须在系统 tempdir 且 `workflow-controller-tb-*` 前缀），实际删除 offload 到工作线程，避免阻塞事件循环。重放在 Session 注册前失败时立即清除尚未移交生命周期管理的 fork_root。
-> - **重建 session**（`birth_traceback.reconstructed_from`，无 `fork_root`）：按 `clean_reconstruct`（`"workflow_controller"` 清产物子集 / `"all"` rmtree 整个 target_cwd）清磁盘 + 经 `ConfigAPI.remove_recent_dir` 同步 `recent_dirs.json`（消除侧边栏幽灵）。默认模式只有 `created_git_dir`/`created_opencode_dir` 标记为真时才删除对应目录，保护用户预先存在的配置；aggressive 模式拒绝根目录/过浅路径。
+> **session 删除清理链路**：`SessionAPI.delete` 在 `pool.remove` 前捕获 `birth_traceback` 透传进 `session_delete` 事件 data（溯源载荷；消费面在路由/清理侧）——
+> - **重放 fork session**（`birth_traceback.fork_root`）：fork 隔离 tempdir 的孤儿清理由内核启动期 `WorkspaceResidueReaper`（`core/workspace/residue_reaper.py`）承接——tempdir 前缀 `workflow-controller-tb-*`、近期活动会话引用的目录受保护，超 TTL 回收；工作区残留树（`.workflow-controller/scopes/<sid>/`）与检查点行同点回收。
+> - **重建 session**（`birth_traceback.reconstructed_from`，无 `fork_root`）：溯源标记 `created_git_dir` / `created_opencode_dir` 随会话持久化，供删除清理判定。
 >
-> `delete` 返回 `{ok, deleted_session_ids}`。`SessionAPI._delete_one` 顺序为 `pool.remove → reclaim_deleted_session_affiliation → bus.emit(session_delete) → event_router.delete_session`——emit 在前使事件落正确项目库，delete_session 随即清掉它，避免孤儿事件行；归属回收与名册删除同点（隐式归属连行带 run 幂等回收，显式 run 的成员行是调用方的记录、不连坐删——与 boot 正向孤儿回收同一判定），删除即清账、不等 boot 兜底（名册全删空时 boot 兜底不触发）。`EventStoreRouter.delete_session` 同时删 default DB（metadata owner）+ 项目 DB（事件），防止重启后 `load_sessions` 从残留 metadata 行复活已删 session。reaper 仅启动期跑一次，活动集 = pool 中且 `last_activity` 在 TTL 窗口内的 session（liveness = `now - last_activity < TTL`），崩溃后 IDLE ghost 超 TTL 即可回收。`uninstall` 经 `EventBus.detach_interceptor/detach_observer` 注销 handler，防 reload 后旧实例与新实例同时触发。
+> `delete` 返回 `{ok, deleted_session_ids}`。`SessionAPI._delete_one` 顺序为 `pool.remove → reclaim_deleted_session_affiliation → bus.emit(session_delete) → event_router.delete_session`——emit 在前使事件落正确项目库，delete_session 随即清掉它，避免孤儿事件行；归属回收与名册删除同点（隐式归属连行带 run 幂等回收，显式 run 的成员行是调用方的记录、不连坐删——与 boot 正向孤儿回收同一判定），删除即清账、不等 boot 兜底（名册全删空时 boot 兜底不触发）。`EventStoreRouter.delete_session` 同时删 default DB（metadata owner）+ 项目 DB（事件），防止重启后 `load_sessions` 从残留 metadata 行复活已删 session。
 
 **翻译归插件、副作用归框架**——这是本重构的核心边界，避免 orchestrator 反向 import plugin SDK 的结果类型：
 
@@ -634,14 +624,13 @@ def _register_observers(self, ctx):
 |--------|----------|---------|
 | Breather | `plugins/breather/` | 上下文窗口 handoff 管理 |
 | staged_pipeline | `plugins/staged_pipeline/` | 门禁执行器：读项目 workflow-controller.yaml 的 `stages` 强制顺序 + 完成门禁（默认关；session 无 stages 则惰性） |
-| agent_traceback | `plugins/agent_traceback/` | 检查点快照 / 重放 + 从 cannbot db 重建会话（默认关） |
 | graph | `plugins/graph/` | DAG 工作流：读 yaml DAG 调度 bash/agent 节点并行执行 + 暂停 / 续跑 / 崩溃恢复（默认关） |
 | file_provenance | `plugins/file_provenance/` | 文件变化证据、逐行归因与 Git authorship（默认关） |
 | fake_driver | `plugins/fake_driver/` | 内置验收插件：注册 fake@1 run 驱动工厂，headless 无外部运行时验收用（默认开） |
 
 
 
-> **agent_traceback 内部 git 状态捕获**：workflow 在 project_dir 内自建的 `.git` 仓（objects/refs/index/logs）也是「文件态」的一部分——它决定 worker 在检查点时刻通过 git 命令能看到什么。检查点快照时 `SnapshotEngine` 把 `project_dir/.git` 整目录**增量**镜像到快照仓保留路径 `working/.workflow-controller-inner-git/`（避开 git 保留名，随工作树同一 commit 原子落库；工作树镜像趟把保留路径排除以防 `--delete` 误删上一检查点镜像；rsync 两趟——固定名小文件 `--checksum` 防「同秒同长漏传」、objects/ 走 quick-check 防白读 GB 级 packfile；镜像后剥除 remote 配置，防含 token 的 URL 在快照仓历史里持久化。受 `snapshot_git_state` / `snapshot_git_state_max_mb` 配置约束，超限标 `skipped_size` 降级；rsync 不可用时降级纯 Python 镜像——size+mtime_ns 判定，不保证捕获同秒同长的 ref 重写，需保真场景应安装 rsync，降级镜像残缺时标 `absent`）；重放 `restore` 用 `git archive` 抽出后改回 `fork_cwd/.git`（unborn/空仓的 objects、refs 空目录抽不出，补齐骨架后 git 才认作有效仓；改回失败时降级 `inner_git_captured=False`，不让可选增强项拉垮整次文件态 restore），`_init_git_sandbox` 主路径以 `git rev-parse --git-dir` 做仓健全性 sanity（`rev-parse HEAD` 会把 unborn HEAD——`git init` 后首个 commit 前——误判为未捕获而降级复制 origin 当刻 `.git`，造成未来历史泄漏），通过后仅移除 remote、**不打 baseline commit**（HEAD/index/status 与检查点时刻一致，unborn 仓忠实保持 unborn）。旧检查点（树里无保留目录）零迁移自动降级为旧行为（复制 origin 当刻 `.git` + baseline）。重建路径（`FileStateRebuilder`）在 task 边界快照时同样镜像 `target_cwd/.git`。
+> **历史快照仓与内部 git 状态（兼容读取面）**：旧 snapshot 模式把工作目录镜像进会话原目录旁的快照仓（`.workflow-controller/snapshots`），用户内部 git 状态以保留路径 `working/.workflow-controller-inner-git/` 随工作树同一 commit 落库。内核兼容读取（`core/workspace/repository.py` 的 `legacy_snapshot_*`）按目录约定直连这些历史仓做只读列表/取文件/恢复；内核工作区模式的基线导入沿用同一保留路径约定镜像用户 `.git`。
 
 #### Graph Runner（`plugins/graph/`）
 
@@ -829,7 +818,7 @@ orch.shutdown()
 > - **fork 按逻辑归属归组**（`DashboardView.logicalProjectDir`）：fork 的 `config.cwd` 是 `workflow-controller-tb-*` 隔离 tempdir，前端按 `origin_session_id` 在 sessions 列表查根 origin 的 `project_dir` 作分组（`origin_session_id` 在 fork 创建时已解析到根）。
 > - **侧边栏扁平一层**（`AppSidebar`）：只列真实项目目录（key=`dir:<cwd>`），点击切换 `project_dir` 指针；fork session 在 Dashboard 展示。
 > - **Dashboard 过滤改用 `logicalProjectDir`**（`DashboardView`）：`sessions.filter(s => logicalProjectDir(s) === projectDir)`，点进 origin 项目能看到其全部 fork。
-> - **fork / 重建 session 删除对称清理 `recent_dirs.json`**（`agent_traceback._on_session_delete`）：fork tempdir cwd 若被误登记进 json（旧版残留 / 用户手选），删 session 时一并 `remove_recent_dir`（与重建对称），否则侧边栏留指向已 rmtree 的 tempdir 的幽灵条目。
+> - **fork / 重建 session 删除对称清理 `recent_dirs.json`**：fork tempdir cwd 若被误登记进 json（旧版残留 / 用户手选），删 session 时一并 `remove_recent_dir`（与重建对称），否则侧边栏留指向已清理 tempdir 的幽灵条目——该卫生谓词属路由层（控制台发行包装配），内核删除事件载荷保留溯源字段供其消费。
 > - **从 cannbot db 重建的 session 目录持久登记**：`POST /api/sessions/import-db` 重建成功后把 `target_cwd` 写入 `recent_dirs.json`。重建 session 的账面与检查点均落守护进程库（重启可还原），`target_cwd` 只承载会话态/文件态产物；session 删除后其 cwd 失去收集来源 → 侧边栏丢失该项目，显式登记兜底运行期可见。
 
 ### Insight 启动命令（控制台侧）
@@ -868,7 +857,7 @@ axcor/
 
 ## File Provenance（V1）
 
-`file_provenance` 是独立内置插件，负责把 Agent/自动化的文件变化转换为可查证的逐行归因。插件默认关闭，通过 `PluginContext.file_changes` 订阅 capture capability；`agent_traceback` 仍只负责会话检查点与重放，不改名、不承载提交归因。
+`file_provenance` 是独立内置插件，负责把 Agent/自动化的文件变化转换为可查证的逐行归因。插件默认关闭，通过 `PluginContext.file_changes` 订阅 capture capability；会话检查点与回滚是内核 `core/` 的回溯能力（traceback），file_provenance 不承载提交归因以外的职责。
 
 文件变化捕获通过 EventBus awaited observer 与插件 capability 两层边界提供：公开的 `FileChangeContext`、`FileChangeOutcome` 与 `FileChangeCapture` 接口位于 `workflow_controller.plugin`，核心层的 `FileChangeRegistry` 实现该接口，并作为 `tool_will_execute` / `tool_execution_finished` / `tool_execution_aborted` 的 `observe_awaited` handler。各 runtime 与 Graph 只发布工具生命周期事件，不直接调用 Registry；EventBus 保证 handler 在发布者继续执行前完成且不拥有控制权。内置插件不得反向导入 `workflow_controller.core`：`PluginRegistry` 将 Orchestrator 持有的 Registry 注入 `PluginContext.file_changes`，归因插件再订阅这个 capability。
 

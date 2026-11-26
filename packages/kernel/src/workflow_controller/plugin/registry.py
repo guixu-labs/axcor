@@ -185,7 +185,7 @@ def _session_flow_factories(orchestrator: Any) -> dict[str, Any]:
 
 
 def _session_lookup_factories(orchestrator: Any) -> dict[str, Any]:
-    """session/事件面端口（agent_traceback 检查点重放与重建消费）与 subagent 端口。"""
+    """session/事件面端口（检查点重放、会话导入等能力的宿主委托面）与 subagent 端口。"""
 
     def find_session(session_id: str) -> Any:
         return orchestrator.pool.get(session_id)

@@ -165,9 +165,9 @@ class Session:
         self.birth_handoff_doc: str | None = None
         self.result: str = "fail"
 
-        # Per-plugin metadata (e.g. agent_traceback's birth_traceback: origin
-        # session/checkpoint for fork tracking). Generic dict — plugins own
-        # their sub-keys; the session model is agnostic.
+        # Capability metadata (e.g. checkpoint replay's birth_traceback: origin
+        # session/checkpoint for fork tracking). Generic dict — capability owners
+        # manage their sub-keys; the session model is agnostic.
         self.plugin_metadata: dict[str, dict[str, Any]] = {}
 
         # staged_pipeline per-stage review channel
@@ -301,6 +301,9 @@ class Session:
                 cwd=self.config.cwd if self.config.cwd else None,
                 max_turns=self.config.max_turns if self.config.max_turns else None,
                 allowed_tools=list(self.config.allowed_tools) if self.config.allowed_tools else [],
+                disallowed_tools=(
+                    list(self.config.disallowed_tools) if self.config.disallowed_tools else []
+                ),
                 env=sdk_env,
                 hooks=self._driver_hooks,
                 system_prompt=self.config.system_prompt,

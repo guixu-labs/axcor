@@ -337,6 +337,9 @@ class OpenCodeDriver(CLIDriverBase):
         # 探测是同步 subprocess（首查最长 15s）：经 to_thread 免吊事件循环，
         # 命中缓存后这里只是一次线程跳的零头
         run_flags = await asyncio.to_thread(_detect_run_flags, self._opencode_bin)
+        # 只读沙箱（allowlist 面）才切换受限 agent；deny-only（严格
+        # traceback 的 task 拒绝）走顶层 permission，不夺走系统提示词通道
+        allowlist_restricted = bool(opts.allowed_tools) and restricted_agent is not None
         args = _build_args(
             bin_path=self._opencode_bin,
             prompt=prompt,
@@ -345,8 +348,8 @@ class OpenCodeDriver(CLIDriverBase):
             command_prefix=self._command_prefix,
             resume=self._resume,
             permission_mode=opts.permission_mode or self._permission_mode,
-            restricted=bool(restricted_agent),
-            worker_agent=not restricted_agent and bool(opts.system_prompt),
+            restricted=allowlist_restricted,
+            worker_agent=not allowlist_restricted and bool(opts.system_prompt),
             agent_name=opts.agent_name,
             run_flags=run_flags,
         )
@@ -650,22 +653,25 @@ def build_restricted_agent_config(
     by the readonly spike: edit/write/bash = deny blocked a file creation that
     the unrestricted default agent performed).
 
-    ``disallowed_tools`` is accepted for Driver-protocol call-site parity but is
-    informational here — the allowlist is the stricter model (it excludes
-    everything not named), so it alone governs.
+    ``disallowed_tools`` denies the named categories even without an
+    allowlist — the strict-traceback writer rejection relies on this
+    (deny-only: task 拒绝 = 子代理不得启动). The allowlist, when present,
+    remains the stricter model and governs everything else.
 
-    Returns ``None`` when ``allowed_tools`` is empty/None (no restriction → the
-    default agent with its full toolset, i.e. the worker). Otherwise an
-    ``{"agent": {<name>: {"permission": {<cat>: "deny", ...}}}}`` dict to merge
-    into ``OPENCODE_CONFIG_CONTENT`` and select with ``--agent <name>``.
+    Returns ``None`` when nothing is denied (no restriction → the default
+    agent with its full toolset, i.e. the worker). Otherwise an
+    ``{"agent": {<name>: {"permission": {<cat>: "deny", ...}}}}`` dict to
+    merge into ``OPENCODE_CONFIG_CONTENT`` and select with ``--agent <name>``.
     """
-    if not allowed_tools:
-        return None
-    allowed = {_CC_TO_OPENCODE_TOOL.get(t, t.lower()) for t in allowed_tools}
-    deny = sorted(_OPENCODE_MUTATING_TOOLS - allowed)
+    allowed = (
+        {_CC_TO_OPENCODE_TOOL.get(t, t.lower()) for t in allowed_tools} if allowed_tools else None
+    )
+    deny = (_OPENCODE_MUTATING_TOOLS - allowed) if allowed is not None else set()
+    for tool in disallowed_tools or ():
+        deny.add(_CC_TO_OPENCODE_TOOL.get(tool, tool.lower()))
     if not deny:
         return None
-    deny_map = {c: "deny" for c in deny}
+    deny_map = {c: "deny" for c in sorted(deny)}
     return {
         # mode=primary：v2 起 run --agent 只对 primary 模式的 agent 生效
         "agent": {_RESTRICTED_AGENT_NAME: {"mode": "primary", "permission": dict(deny_map)}},

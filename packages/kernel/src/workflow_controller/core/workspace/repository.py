@@ -25,15 +25,22 @@ seed 物化 writer_local 路径后提交建区基线。
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import os
+import re
 import shutil
+import string
+import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "INNER_GIT_RESERVED_PATH",
@@ -43,7 +50,16 @@ __all__ = [
     "ScopeWorkspace",
     "WorkspaceRepository",
     "WorkspaceRepositoryError",
+    "init_replay_git_sandbox",
+    "legacy_snapshot_dir_for",
+    "legacy_snapshot_file",
+    "legacy_snapshot_list",
+    "legacy_snapshot_restore",
+    "remove_all_remotes",
+    "run_git_sync",
+    "run_snapshot_git_sync",
 ]
+
 
 # 用户 .git 在基线树中的保留路径：避开 git 保留名，恢复端可按需还原
 INNER_GIT_RESERVED_PATH = ".workflow-controller-inner-git"
@@ -60,6 +76,20 @@ _BASELINE_EXCLUDE_PATHSPECS = (
 
 # 作用域分支前缀，作用域工作区与检查点提交一律落该命名空间
 _SCOPE_BRANCH_PREFIX = "scope/"
+
+# 作用域键进入分支名/目录名时原样保留的字符；其余字符（含 % 自身）按 UTF-8 逐字节 %XX 编码
+_SCOPE_KEY_SAFE_CHARS = frozenset(string.ascii_letters + string.digits + "_-")
+
+
+def _escape_scope_key(scope_key: str) -> str:
+    """作用域键转义为合法且互不冲突的分支名/目录名组件。"""
+    return "".join(
+        char
+        if char in _SCOPE_KEY_SAFE_CHARS
+        else "".join(f"%{byte:02X}" for byte in char.encode("utf-8", "surrogatepass"))
+        for char in scope_key
+    )
+
 
 # 每次 checkout 传入的路径数上限，避免超长命令行
 _CHECKOUT_PATH_CHUNK = 200
@@ -131,6 +161,10 @@ class WorkspaceRepository:
         self.repo_dir = self.tree_dir / "repo.git"
         self.workspaces_dir = self.tree_dir / "workspaces"
 
+    def workspace_dir_for(self, scope_key: str) -> Path:
+        """作用域键的默认工作区目录（目录名取转义键，作用域键原样保留）。"""
+        return self.workspaces_dir / _escape_scope_key(scope_key)
+
     async def import_baseline(self, *, writer_local_pathspecs: Sequence[str]) -> RootRefs:
         """导入基线并建立根双引用；私有仓已存在或 git 缺席时拒绝。"""
         if shutil.which("git") is None:
@@ -161,12 +195,20 @@ class WorkspaceRepository:
         base_commit: str,
         materialize_from: str | None = None,
         materialize_pathspecs: Sequence[str] = (),
+        workspace_dir: Path | None = None,
     ) -> ScopeWorkspace:
-        """建作用域工作区：自 base_commit 检出、按需物化路径后提交建区基线。"""
+        """建作用域工作区：自 base_commit 检出、按需物化路径后提交建区基线。
+
+        workspace_dir 显式指定落点（默认 ``workspaces/<转义作用域键>``）；
+        分支名与默认目录名均取转义作用域键——单会话主写者的固定
+        ``root/`` 落点用它保住建区代次命名的分支空间。
+        """
         if not scope_key or "/" in scope_key:
             raise WorkspaceRepositoryError(f"非法 scope_key：{scope_key!r}")
-        branch = f"{_SCOPE_BRANCH_PREFIX}{scope_key}"
-        workspace_path = self.workspaces_dir / scope_key
+        branch = f"{_SCOPE_BRANCH_PREFIX}{_escape_scope_key(scope_key)}"
+        workspace_path = (
+            workspace_dir if workspace_dir is not None else self.workspace_dir_for(scope_key)
+        )
         if workspace_path.exists():
             raise WorkspaceRepositoryError(f"作用域工作区已存在：{workspace_path}")
         await self._run_repo_git(
@@ -188,6 +230,36 @@ class WorkspaceRepository:
             base_commit=base_commit_after_materialize,
         )
 
+    async def create_reader_workspace(
+        self,
+        scope_key: str,
+        *,
+        commit: str,
+    ) -> Path:
+        """建 reader 子代理的 detached worktree 只读快照：无分支、不建基线提交。
+
+        严格模式下 reader 的写入不构成保证：本仓不做只读挂载强制，按
+        审计约定处理（越界写由 file_provenance 审计与对账发现）。
+        """
+        if not scope_key or "/" in scope_key:
+            raise WorkspaceRepositoryError(f"非法 scope_key：{scope_key!r}")
+        workspace_path = self.workspace_dir_for(scope_key)
+        if workspace_path.exists():
+            raise WorkspaceRepositoryError(f"作用域工作区已存在：{workspace_path}")
+        await self._run_repo_git(
+            ["worktree", "add", "--quiet", "--detach", str(workspace_path), commit]
+        )
+        return workspace_path
+
+    async def reset_workspace_state(self, workspace_path: Path, commit: str) -> None:
+        """把工作区文件态硬恢复到目标提交：reset 后清掉全部未跟踪残留。
+
+        clean 带 -x：被忽略路径中未跟踪的构建产物同属检查点之后的
+        副作用，一并撤回（可重建路径由重建脚本重新生成）。
+        """
+        await self._run_workspace_git(workspace_path, ["reset", "--hard", commit])
+        await self._run_workspace_git(workspace_path, ["clean", "-fdx", "--quiet"])
+
     async def commit_workspace_state(self, workspace_path: Path, message: str) -> str:
         """全量暂存并提交工作区当前状态，返回提交号。"""
         await self._run_workspace_git(workspace_path, ["add", "-A", "--force"])
@@ -207,6 +279,51 @@ class WorkspaceRepository:
             if exc.returncode == 1:
                 return None
             raise
+
+    async def tree_blob_entries(self, commit: str) -> dict[str, str]:
+        """列出一个提交树的全部 blob：路径 → blob 哈希（子模块等非 blob 项跳过）。"""
+        out = await self._run_repo_git(["ls-tree", "-r", "-z", commit])
+        entries: dict[str, str] = {}
+        for record in out.split("\0"):
+            if not record:
+                continue
+            meta, _, path = record.partition("\t")
+            fields = meta.split()
+            if len(fields) >= 3 and fields[1] == "blob":
+                entries[path] = fields[2]
+        return entries
+
+    async def blob_size(self, commit: str, path: str) -> int | None:
+        """提交内一个文件的大小；路径不在树内返回 None。"""
+        try:
+            out = await self._run_repo_git(["cat-file", "-s", f"{commit}:{path}"])
+        except WorkspaceRepositoryError:
+            return None
+        try:
+            return int(out.strip())
+        except ValueError:
+            return None
+
+    async def blob_content(self, commit: str, path: str) -> bytes | None:
+        """提交内一个文件的内容；路径不在树内返回 None。"""
+        try:
+            return await self._run_repo_git_bytes(["cat-file", "blob", f"{commit}:{path}"])
+        except WorkspaceRepositoryError:
+            return None
+
+    async def prune_scope_residue(self, workspace_dir: Path, scope_key: str) -> None:
+        """清理无账的半成品建区残留：工作树与同名分支（含代次后缀）一并移除。"""
+        if workspace_dir.exists():
+            with contextlib.suppress(WorkspaceRepositoryError):
+                await self._run_repo_git(["worktree", "remove", "--force", str(workspace_dir)])
+        prefix = f"{_SCOPE_BRANCH_PREFIX}{_escape_scope_key(scope_key)}"
+        out = await self._run_repo_git(
+            ["for-each-ref", "--format=%(refname:short)", f"refs/heads/{prefix}"]
+        )
+        pattern = re.compile(rf"^{re.escape(prefix)}(-e\d+)?$")
+        for branch in (line.strip() for line in out.splitlines()):
+            if branch and pattern.match(branch):
+                await self._run_repo_git(["branch", "-D", branch])
 
     async def _init_bare_repo(self) -> None:
         """初始化裸私有仓：禁 hooks、关换行归一、HEAD 指向集成线。"""
@@ -321,6 +438,10 @@ class WorkspaceRepository:
             input=input,
         )
 
+    async def _run_repo_git_bytes(self, args: Sequence[str]) -> bytes:
+        """私有仓级 git 调用，返回原始字节（文件内容读取用）。"""
+        return await self._run_git_bytes(args, git_dir=self.repo_dir)
+
     async def _run_workspace_git(self, workspace_path: Path, args: Sequence[str]) -> str:
         """作用域工作区内 git 调用（环境不带分离变量，由 .git 指针解析）。"""
         return await self._run_git(args, cwd=workspace_path)
@@ -372,3 +493,354 @@ class WorkspaceRepository:
                 returncode=proc.returncode,
             )
         return stdout
+
+    async def _run_git_bytes(
+        self,
+        args: Sequence[str],
+        *,
+        git_dir: Path | None = None,
+    ) -> bytes:
+        """执行 git 子进程并返回原始 stdout 字节（内容读取面）。"""
+        env = dict(os.environ)
+        for var in _SEPARATED_GIT_VARS:
+            env.pop(var, None)
+        if git_dir is not None:
+            env["GIT_DIR"] = str(git_dir)
+        env.update(_GIT_IDENTITY_ENV)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                *_GIT_COMMON_ARGS,
+                *args,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise WorkspaceRepositoryError("git 不可用") from exc
+        stdout_bytes, stderr_bytes = await proc.communicate()
+        if proc.returncode != 0:
+            stderr = stderr_bytes.decode("utf-8", "replace")
+            raise WorkspaceRepositoryError(
+                f"git {' '.join(args)} 失败（rc={proc.returncode}）：{stderr.strip()[-500:]}",
+                returncode=proc.returncode,
+            )
+        return stdout_bytes
+
+
+# ── 快照兼容仓与重放沙箱的同步 git 出口（线程内消费，勿在事件循环直调） ──
+
+
+def _sync_git_env() -> dict[str, str]:
+    """同步 git 调用的环境：剥离分离变量并叠加重放身份。"""
+    env = dict(os.environ)
+    for var in _SEPARATED_GIT_VARS:
+        env.pop(var, None)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "workflow-controller-tb",
+            "GIT_AUTHOR_EMAIL": "workflow-controller-tb@local",
+            "GIT_COMMITTER_NAME": "workflow-controller-tb",
+            "GIT_COMMITTER_EMAIL": "workflow-controller-tb@local",
+        }
+    )
+    return env
+
+
+def run_git_sync(
+    cwd: Path,
+    args: Sequence[str],
+    *,
+    timeout: float = 10.0,
+) -> subprocess.CompletedProcess[str]:
+    """在指定目录同步执行 git（快照兼容仓/重放沙箱的唯一出口，参数不含 git 词）。"""
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=_sync_git_env(),
+    )
+
+
+def run_snapshot_git_sync(
+    cwd: Path,
+    args: Sequence[str],
+    *,
+    timeout: float = 30.0,
+) -> subprocess.CompletedProcess[str]:
+    """快照仓身份的同步 git 调用（导入重建轨沿用历史快照仓的 commit 作者）。"""
+    env = _sync_git_env()
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "workflow-controller-snapshot",
+            "GIT_AUTHOR_EMAIL": "workflow-controller-snapshot@local",
+            "GIT_COMMITTER_NAME": "workflow-controller-snapshot",
+            "GIT_COMMITTER_EMAIL": "workflow-controller-snapshot@local",
+        }
+    )
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+
+
+def remove_all_remotes(git_dir: Path) -> None:
+    """剥除指定 ``.git`` 目录的全部 remote（防外连与 token 持久化，best-effort）。"""
+    result = subprocess.run(
+        ["git", "--git-dir", str(git_dir), "remote"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_sync_git_env(),
+    )
+    if result.returncode != 0:
+        return
+    for name in result.stdout.split():
+        subprocess.run(
+            ["git", "--git-dir", str(git_dir), "remote", "rm", name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_sync_git_env(),
+        )
+
+
+def legacy_snapshot_dir_for(cwd: Path) -> Path:
+    """会话原目录对应的历史快照仓目录（兼容读取的寻址约定）。"""
+    return Path(cwd) / ".workflow-controller" / "snapshots"
+
+
+def _strip_rel(path: str) -> str:
+    """清理预览路径：去首尾斜杠与 ``./`` 前缀。"""
+    return path.strip("/").lstrip("./")
+
+
+def legacy_snapshot_list(
+    snapshot_dir: Path, git_ref: str, subpath: str = ""
+) -> list[dict[str, Any]]:
+    """列旧检查点文件态直接子项（快照树根为 ``working/``）。
+
+    返回 ``[{"name", "path", "is_dir"}]``（目录在前），对齐既有插件预览口径；
+    顶层隐藏内部 git 保留目录。仓或引用缺席返回空。
+    """
+    if not git_ref or not Path(snapshot_dir).is_dir():
+        return []
+    sub = _strip_rel(subpath)
+    tree_ish = f"{git_ref}:working" if not sub else f"{git_ref}:working/{sub}"
+    result = run_git_sync(Path(snapshot_dir), ["ls-tree", tree_ish], timeout=5.0)
+    if result.returncode != 0:
+        return []
+    entries: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        meta, name = line.split("\t", 1)
+        fields = meta.split()
+        if len(fields) < 2 or not name:
+            continue
+        if not sub and name == INNER_GIT_RESERVED_PATH:
+            continue
+        entries.append(
+            {
+                "name": name,
+                "path": f"{sub}/{name}".strip("/") if sub else name,
+                "is_dir": fields[1] == "tree",
+            }
+        )
+    entries.sort(key=lambda e: (not e["is_dir"], e["name"]))
+    return entries
+
+
+def legacy_snapshot_file(snapshot_dir: Path, git_ref: str, path: str) -> dict[str, Any] | None:
+    """读旧检查点的一个文件内容（>512KB 只报大小不读全量）。"""
+    if not git_ref or not Path(snapshot_dir).is_dir():
+        return None
+    rel = _strip_rel(path)
+    if not rel:
+        return None
+    obj = f"working/{rel}"
+    size_result = run_git_sync(
+        Path(snapshot_dir), ["cat-file", "-s", f"{git_ref}:{obj}"], timeout=5.0
+    )
+    size = 0
+    if size_result.returncode == 0:
+        try:
+            size = int(size_result.stdout.strip())
+        except ValueError:
+            size = 0
+    if size > 512 * 1024:
+        return {
+            "name": rel.rsplit("/", 1)[-1],
+            "path": rel,
+            "size": size,
+            "content": "(file too large to preview)",
+            "truncated": True,
+        }
+    show = subprocess.run(
+        ["git", "-c", "core.hooksPath=", "show", f"{git_ref}:{obj}"],
+        cwd=str(Path(snapshot_dir)),
+        capture_output=True,
+        timeout=5.0,
+        env=_sync_git_env(),
+    )
+    if show.returncode != 0:
+        return None
+    return {
+        "name": rel.rsplit("/", 1)[-1],
+        "path": rel,
+        "size": size,
+        "content": show.stdout.decode("utf-8", "replace"),
+        "truncated": False,
+    }
+
+
+def _restore_inner_git(dest_dir: Path) -> bool:
+    """把保留路径还原为 ``.git``（恢复端专用，失败降级返回 False）。"""
+    reserved = dest_dir / INNER_GIT_RESERVED_PATH
+    git_dir = dest_dir / ".git"
+    if not reserved.is_dir():
+        return False
+    shutil.rmtree(git_dir, ignore_errors=True)
+    try:
+        reserved.rename(git_dir)
+    except OSError:
+        shutil.rmtree(reserved, ignore_errors=True)
+        return False
+    return True
+
+
+def legacy_snapshot_restore(snapshot_dir: Path, git_ref: str, dest_dir: Path) -> tuple[bool, bool]:
+    """把旧检查点文件态抽到目标目录，返回 ``(是否成功, 是否带内部 git)``。
+
+    ``git archive`` 管道解包 ``working/`` 前缀；空检查点（树不含 working
+    条目）按成功恢复空文件态处理（对齐既有快照引擎口径）。
+    """
+    snapshot_dir = Path(snapshot_dir)
+    dest_dir = Path(dest_dir)
+    if not snapshot_dir.is_dir() or not git_ref:
+        return False, False
+    probe = run_git_sync(snapshot_dir, ["ls-tree", git_ref, "--", "working"], timeout=5.0)
+    if probe.returncode != 0 or not probe.stdout.strip():
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        return True, False
+    reserved = run_git_sync(
+        snapshot_dir,
+        ["ls-tree", git_ref, "--", f"working/{INNER_GIT_RESERVED_PATH}"],
+        timeout=5.0,
+    )
+    inner_captured = bool(reserved.returncode == 0 and reserved.stdout.strip())
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    archive = subprocess.Popen(
+        ["git", "archive", "--format=tar", git_ref, "--", "working"],
+        cwd=str(snapshot_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_sync_git_env(),
+    )
+    extract = subprocess.Popen(
+        ["tar", "-x", "--strip-components=1", "-C", str(dest_dir)],
+        stdin=archive.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    archive.stdout.close()
+    _extract_out, extract_err = extract.communicate()
+    archive.wait()
+    if extract.returncode != 0:
+        logger.warning("快照恢复解包失败：%s", extract_err.decode("utf-8", "replace")[-300:])
+        return False, False
+    if inner_captured:
+        inner_captured = _restore_inner_git(dest_dir)
+    return True, inner_captured
+
+
+def _remove_all_remotes(git_dir: Path) -> None:
+    """移除仓内全部 remote 配置段（fork 不连外部 remote，best-effort）。"""
+    result = run_git_sync(git_dir.parent, ["remote"], timeout=5.0)
+    if result.returncode != 0:
+        return
+    for name in result.stdout.split():
+        run_git_sync(git_dir.parent, ["remote", "remove", name], timeout=5.0)
+
+
+def _dir_size_mb(path: Path) -> float:
+    """目录体积（MB，best-effort）。"""
+    total = 0
+    for root, _dirs, files in os.walk(str(path)):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+    return total / (1024 * 1024)
+
+
+def _adopt_restored_inner_git(fork_cwd: Path, inner_git_captured: bool) -> bool:
+    """采用恢复出的内部 git（检查点时刻原样）返回 True，否则走降级。"""
+    fork_git = fork_cwd / ".git"
+    if fork_git.is_file():
+        fork_git.unlink(missing_ok=True)
+    if not inner_git_captured or not fork_git.is_dir():
+        return False
+    # sanity 用 rev-parse --git-dir 而非 HEAD：unborn HEAD 是合法状态
+    sanity = run_git_sync(fork_cwd, ["rev-parse", "--git-dir"], timeout=10.0)
+    if sanity.returncode != 0:
+        shutil.rmtree(fork_git, ignore_errors=True)
+        return False
+    _remove_all_remotes(fork_cwd)
+    run_git_sync(fork_cwd, ["config", "--unset", "core.worktree"], timeout=5.0)
+    return True
+
+
+def _copy_origin_git_history(fork_cwd: Path, origin_cwd: str | None, max_mb: int) -> bool:
+    """降级分支：体积阈值内复制 origin 当刻 ``.git``；否则返回 False。"""
+    if not origin_cwd:
+        return False
+    src_git = Path(origin_cwd) / ".git"
+    if not src_git.is_dir():
+        return False
+    if max_mb > 0 and _dir_size_mb(src_git) > max_mb:
+        return False
+    try:
+        shutil.copytree(src_git, fork_cwd / ".git", copy_function=shutil.copy)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def init_replay_git_sandbox(
+    fork_cwd: Path,
+    origin_cwd: str | None,
+    *,
+    git_history_max_mb: int = 0,
+    inner_git_captured: bool = False,
+) -> None:
+    """在重放目录建可用 git 工作树：恢复内部 git > 复制 origin > git init。
+
+    best-effort：git 不可用或失败不阻塞重放（仅 git 命令报错）。
+    """
+    if shutil.which("git") is None:
+        return
+    try:
+        if _adopt_restored_inner_git(fork_cwd, inner_git_captured):
+            return
+        copied = _copy_origin_git_history(fork_cwd, origin_cwd, git_history_max_mb)
+        if not copied:
+            if run_git_sync(fork_cwd, ["init"], timeout=10.0).returncode != 0:
+                return
+        else:
+            _remove_all_remotes(fork_cwd)
+        run_git_sync(fork_cwd, ["add", "-A"], timeout=30.0)
+        run_git_sync(
+            fork_cwd,
+            ["commit", "-m", "workflow-controller traceback sandbox baseline", "--allow-empty"],
+            timeout=30.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.debug("重放 git 沙箱初始化失败（不阻塞重放）", exc_info=True)

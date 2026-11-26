@@ -1479,11 +1479,13 @@ class SessionAPI:
         await self._orch.reclaim_deleted_session_affiliation(session_id)
         # 必须在 delete_session 之前 emit：bus.emit 会落盘事件，若放在 delete_session
         # 之后，事件会重新写回刚清空的 DB 留下孤儿行。先 emit 再 delete_session：
-        # 事件落入正确项目库，随即被清掉。插件以拦截器（而非观察者）内联清理
-        # fork_root / checkpoint 等 own 状态，保证同步返回前清理完成。
+        # 事件落入正确项目库，随即被清掉。拦截器（如 file_provenance 的脱敏）
+        # 在此内联完成 own 状态清理；birth_traceback / clean_reconstruct 为
+        # 溯源载荷（消费面在路由/清理侧），fork tempdir 孤儿由内核启动期
+        # residue reaper 承接。
         #
         # birth_traceback 经事件 data 直接透传：session 此时已从 pool 移除，
-        # 插件无法再经 pool.get 拿到它。
+        # 事件消费方无法再经 pool.get 拿到它。
         await self._orch.bus.emit(
             Event.create(
                 session_id=session_id,

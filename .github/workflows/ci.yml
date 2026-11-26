@@ -41,7 +41,6 @@ jobs:
       - name: 各发行包独立构建
         run: |
           uv build --package workflow-controller-kernel
-          uv build --package workflow-controller-plugin-agent-traceback
           uv build --package workflow-controller-plugin-breather
           uv build --package workflow-controller-plugin-fake-driver
           uv build --package workflow-controller-plugin-file-provenance
@@ -76,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        plugin: [agent-traceback, breather, file-provenance, graph, staged-pipeline]
+        plugin: [breather, file-provenance, graph, staged-pipeline]
     steps:
       - uses: actions/checkout@v4
 

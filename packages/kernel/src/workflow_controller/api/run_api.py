@@ -367,6 +367,334 @@ class RunAPI:
         except RunNotFoundError as e:
             raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
 
+    # ── 回滚查询与异步请求面 ────────────────────────────────────
+
+    async def list_run_scopes(self, run_id: str) -> list[dict[str, Any]]:
+        """run 的作用域查询（工作区树运行时在位时；不在位为空列表）。"""
+        try:
+            return await self._coord.list_run_scopes(run_id)
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+
+    async def list_run_checkpoints(
+        self, run_id: str, *, scope_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """run 的检查点查询（scope_checkpoints 行；可按作用域过滤）。"""
+        try:
+            return await self._coord.list_run_checkpoints(run_id, scope_id=scope_id)
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+
+    async def get_run_operation(self, run_id: str, operation_id: str) -> dict[str, Any]:
+        """异步操作状态查询（经驱动 get_operation op；run 无运行时为状态错误）。"""
+        try:
+            return await self._coord.request_driver_op(
+                run_id, "get_operation", {"operation_id": operation_id}
+            )
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+        except LookupError as e:
+            raise RunApiNotFoundError(str(e)) from e
+        except RuntimeError as e:
+            raise RunApiInvalidStateError(str(e)) from e
+
+    async def request_run_rollback(
+        self,
+        run_id: str,
+        *,
+        node_id: str,
+        client_op_id: str,
+        expected_epoch: int,
+        scope_id: str | None = None,
+        checkpoint_id: str | None = None,
+        expected_root_epoch: int | None = None,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """节点回滚请求（异步）：转发驱动 rollback_node op，返回 operation_id。
+
+        显式给出的 checkpoint_id 先对 run 的检查点账本核验存在（无有效
+        检查点明确拒绝）；目标已集成（passed）时为已合并回滚，须另携带
+        旧根代次 expected_root_epoch（取 run 作用域查询的根行值）；其余
+        前置（traceback 开关、代次）由驱动在受理时校验。
+        """
+        if checkpoint_id:
+            rows = await self.list_run_checkpoints(run_id)
+            if not any(row["checkpoint_id"] == checkpoint_id for row in rows):
+                raise ValueError(f"检查点不存在于该 run：{checkpoint_id}")
+        args: dict[str, Any] = {
+            "node_id": node_id,
+            "client_op_id": client_op_id,
+            "expected_epoch": expected_epoch,
+        }
+        if scope_id is not None:
+            args["scope_id"] = scope_id
+        if checkpoint_id is not None:
+            args["checkpoint_id"] = checkpoint_id
+        if expected_root_epoch is not None:
+            args["expected_root_epoch"] = expected_root_epoch
+        if reason:
+            args["reason"] = reason
+        try:
+            return await self._coord.request_driver_op(run_id, "rollback_node", args)
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+
+    async def request_run_rollback_nodes(
+        self,
+        run_id: str,
+        *,
+        targets: list[dict[str, Any]],
+        client_op_id: str,
+        expected_root_epoch: int | None = None,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """批量节点回滚请求（异步）：转发驱动 rollback_nodes op，返回 operation_id。
+
+        targets 每项携带 node_id 与 expected_epoch（可选 scope_id 与
+        checkpoint_id）；每个显式给出的 checkpoint_id 先对 run 的检查点
+        账本核验存在（无有效检查点明确拒绝）；其余前置（traceback 开关、
+        映射/代次、目标归并）由驱动在受理时校验。含已合并目标时须另携
+        带旧根代次 expected_root_epoch。
+        """
+        if not isinstance(targets, list) or not targets:
+            raise ValueError("targets 须为非空列表")
+        explicit_checkpoints: list[str] = []
+        for entry in targets:
+            if not isinstance(entry, dict) or not entry.get("node_id"):
+                raise ValueError("targets 每项须为携带 node_id 的对象")
+            if entry.get("checkpoint_id"):
+                explicit_checkpoints.append(str(entry["checkpoint_id"]))
+        if explicit_checkpoints:
+            rows = await self.list_run_checkpoints(run_id)
+            known = {row["checkpoint_id"] for row in rows}
+            missing = [cp for cp in explicit_checkpoints if cp not in known]
+            if missing:
+                raise ValueError(f"检查点不存在于该 run：{', '.join(missing)}")
+        args: dict[str, Any] = {
+            "targets": [
+                {
+                    "node_id": entry["node_id"],
+                    "expected_epoch": entry.get("expected_epoch"),
+                    **(
+                        {"scope_id": entry["scope_id"]} if entry.get("scope_id") is not None else {}
+                    ),
+                    **(
+                        {"checkpoint_id": entry["checkpoint_id"]}
+                        if entry.get("checkpoint_id") is not None
+                        else {}
+                    ),
+                }
+                for entry in targets
+            ],
+            "client_op_id": client_op_id,
+        }
+        if expected_root_epoch is not None:
+            args["expected_root_epoch"] = expected_root_epoch
+        if reason:
+            args["reason"] = reason
+        try:
+            return await self._coord.request_driver_op(run_id, "rollback_nodes", args)
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+
+    async def request_subagent_rollback(
+        self,
+        run_id: str,
+        *,
+        node_id: str,
+        client_op_id: str,
+        expected_epoch: int,
+        checkpoint_id: str,
+        scope_id: str | None = None,
+        replay_dispatch: bool = False,
+        expected_root_epoch: int | None = None,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """子代理回滚请求（异步）：转发驱动 rollback_subagent op，返回 operation_id。
+
+        检查点须为该 run 的派发组检查点行；replay_dispatch 开启时先做
+        「单 task、无其他副作用」校验，多副作用组明确拒绝。目标已集成
+        到根（节点 passed）时按已合并回滚传播，须另携带旧根代次
+        expected_root_epoch。
+        """
+        rows = await self.list_run_checkpoints(run_id)
+        row = next((r for r in rows if r["checkpoint_id"] == checkpoint_id), None)
+        if row is None:
+            raise ValueError(f"检查点不存在于该 run：{checkpoint_id}")
+        if row.get("trigger") != "before_child" or not (row.get("dispatch_anchor") or {}).get(
+            "dispatch_group_id"
+        ):
+            raise ValueError(f"回滚目标须为派发组检查点：{checkpoint_id}")
+        if replay_dispatch:
+            await self._coord.validate_dispatch_replay(run_id, checkpoint_id)
+        args: dict[str, Any] = {
+            "node_id": node_id,
+            "client_op_id": client_op_id,
+            "expected_epoch": expected_epoch,
+            "checkpoint_id": checkpoint_id,
+            "replay_dispatch": replay_dispatch,
+        }
+        if scope_id is not None:
+            args["scope_id"] = scope_id
+        if expected_root_epoch is not None:
+            args["expected_root_epoch"] = expected_root_epoch
+        if reason:
+            args["reason"] = reason
+        try:
+            return await self._coord.request_driver_op(run_id, "rollback_subagent", args)
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+
+    # ── 单会话工作区查询与回滚面（HTTP 路由装配住控制台发行包）──
+
+    async def get_session_live_view(
+        self, session_id: str, path: str | None = None
+    ) -> dict[str, Any]:
+        """单会话托管工作区的只读实时视图（目录树或单文件内容）。"""
+        try:
+            return await self._coord.get_session_live_view(session_id, path)
+        except LookupError as e:
+            raise RunApiSessionNotFoundError(str(e)) from e
+
+    async def list_session_workspace_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+        """单会话树的检查点查询（子代理回滚的核对面）。"""
+        try:
+            return await self._coord.list_session_workspace_checkpoints(session_id)
+        except LookupError as e:
+            raise RunApiSessionNotFoundError(str(e)) from e
+
+    async def list_session_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
+        """单会话两代检查点合并查询：工作区模式行 + 快照代历史行（标注 generation）。"""
+        return await self._coord.list_session_checkpoints(session_id)
+
+    async def list_session_checkpoint_files(
+        self, session_id: str, checkpoint_id: str, subpath: str = ""
+    ) -> list[dict[str, Any]]:
+        """按检查点列文件态直接子项（重放前预览；两代统一入口）。"""
+        return await self._coord.list_session_checkpoint_files(session_id, checkpoint_id, subpath)
+
+    async def read_session_checkpoint_file(
+        self, session_id: str, checkpoint_id: str, path: str
+    ) -> dict[str, Any]:
+        """按检查点读单文件内容（重放前预览；两代统一入口）。"""
+        data = await self._coord.read_session_checkpoint_file(session_id, checkpoint_id, path)
+        if data is None:
+            raise RunApiSessionNotFoundError(f"文件不在检查点内：{path}（{checkpoint_id}）")
+        return data
+
+    async def replay_session_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        *,
+        runtime: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """从历史检查点重放新会话（旧 traceback 触发的内核等价物）。
+
+        ``overrides`` 逐字段赢过 origin 继承值（model/system_prompt/loop/
+        reviewer/initial_prompt 等）；无 overrides 时行为等价透明重放。
+        """
+        return await self._coord.replay_session_checkpoint(
+            session_id,
+            checkpoint_id,
+            runtime=runtime,
+            overrides=overrides,
+        )
+
+    async def request_session_subagent_rollback(
+        self,
+        session_id: str,
+        *,
+        checkpoint_id: str,
+        expected_epoch: int,
+        client_op_id: str,
+        replay_dispatch: bool = False,
+    ) -> dict[str, Any]:
+        """单会话子代理回滚：组检查点恢复并绑定恢复会话，返回恢复结论。
+
+        检查点先对会话树核验为派发组恢复点行；expected_epoch 为主写者
+        作用域当前代次（取检查点行 scope_epoch 之外的实时值须先经查询面）。
+        """
+        rows = await self.list_session_workspace_checkpoints(session_id)
+        row = next((r for r in rows if r["checkpoint_id"] == checkpoint_id), None)
+        if row is None:
+            raise ValueError(f"检查点不存在于该会话：{checkpoint_id}")
+        if row.get("trigger") != "before_child" or not (row.get("dispatch_anchor") or {}).get(
+            "dispatch_group_id"
+        ):
+            raise ValueError(f"回滚目标须为派发组检查点：{checkpoint_id}")
+        try:
+            return await self._coord.restore_session_subagent(
+                session_id,
+                checkpoint_id=checkpoint_id,
+                expected_epoch=expected_epoch,
+                client_op_id=client_op_id,
+                replay_dispatch=replay_dispatch,
+            )
+        except LookupError as e:
+            raise RunApiSessionNotFoundError(str(e)) from e
+
+    # ── 外部 session db 导入与残留清理面（HTTP 路由装配住控制台发行包）──
+
+    async def replay_session_runtime(self, session_id: str) -> dict[str, str]:
+        """探测会话源对话的 runtime（重放表单预填；不在场空串）。"""
+        return {"runtime": self._coord.replay_session_runtime(session_id)}
+
+    async def import_session_db(self, db_path: str, target_cwd: str) -> dict[str, Any]:
+        """导入外部 cannbot session db 为本仓会话（含历史检查点与导入日志）。
+
+        与插件 ``POST /api/sessions/import-db`` 同语义：同步等待到完成，
+        响应带 ``log_path``（重建目录内固定落点，可经 ``read_import_log``
+        下载；重建到 tempdir 的项目登记「最近项目」属路由层卫生谓词）。
+        """
+        db_path_raw = (db_path or "").strip()
+        target_raw = (target_cwd or "").strip()
+        if not db_path_raw or not target_raw:
+            return {
+                "ok": False,
+                "session_id": "",
+                "checkpoints": [],
+                "error": "db_path and target_cwd are required",
+                "log_path": "",
+            }
+        # 与导入编排内部同一解析（expanduser + resolve）：返回给调用方的
+        # log_path 即磁盘真实路径。
+        resolved_cwd = Path(target_raw).expanduser().resolve()
+        result = await self._coord.import_session_db(db_path_raw, str(resolved_cwd))
+        result["log_path"] = str(
+            resolved_cwd / ".workflow-controller" / "reconstruct" / "reconstruction.log"
+        )
+        return result
+
+    async def read_import_log(self, target_cwd: str) -> dict[str, Any]:
+        """读导入日志内容（重建中读到部分行、完成后全文；缺席 404）。"""
+        raw = (target_cwd or "").strip()
+        if not raw:
+            raise RunApiNotFoundError("target_cwd is required")
+        data = self._coord.read_import_log(raw)
+        if not data.get("exists"):
+            raise RunApiNotFoundError("import log not found")
+        return data
+
+    async def reap_workspace_residue(self) -> dict[str, Any]:
+        """显式触发一轮工作区残留清理（崩溃残留树/过期检查点行/fork 孤儿）。"""
+        return await self._coord.reap_workspace_residue()
+
+    async def reload_run_definition(
+        self, run_id: str, program_path: str | Path | None = None
+    ) -> dict[str, Any]:
+        """重读当前工作流定义并更新现有 run 的任务定义。
+
+        保留节点状态与产物、不新建 run；仅暂停态受理（运行中/终态拒绝）。
+        program_path 缺省重读 run 的原始程序位置（RSI 应用 patch 后的同
+        一文件），显式新路径按新位置重读。
+        """
+        try:
+            return await self._coord.reload_run_definition(run_id, program_path)
+        except RunNotFoundError as e:
+            raise RunApiNotFoundError(e.args[0] if e.args else run_id) from e
+
     # ── 驱动通道与事件 ──────────────────────────────────────────
 
     async def fetch_events(

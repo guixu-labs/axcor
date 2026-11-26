@@ -697,6 +697,12 @@ class TestOpChannel:
         )  # CancelTimer 已派发
         assert emitted == ["projection_updated"]  # 事件照派发
         assert h.so.started == []  # 读路径不出生成员
+        # 驱动 run 键事件同流总线分发（只分发不落库）：watchdog 等订阅者的事实源
+        assert len(h.bus.ephemeral) == 1
+        relayed = h.bus.ephemeral[0]
+        assert relayed.event_type == "projection_updated"
+        assert relayed.run_id == run_id
+        assert relayed.session_id == ""
 
     async def test_late_op_settle_leaves_trace(self, tmp_path, caplog, monkeypatch):
         """回执晚于调用方等待上界：留痕「结果未送达」，不得静默丢弃。"""

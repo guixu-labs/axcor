@@ -25,6 +25,7 @@ import pytest
 from workflow_controller.api.session_api import SessionAPI
 from workflow_controller.config.settings import SessionConfig
 from workflow_controller.core.runs import (
+    SCHEMA_VERSION,
     RunKind,
     RunNotFoundError,
     RunRecord,
@@ -651,7 +652,7 @@ class TestEventsDbCoexistence:
             }
             assert {"runs", "run_sessions", "events", "run_events", "sessions"} <= tables
             # user_version 唯一写者 = RunStore：EventStore 初始化后不得改档
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert (await store.get(rec.run_id)).run_id == rec.run_id
 
     async def test_event_store_first_then_run_store(self, tmp_path):
@@ -668,7 +669,7 @@ class TestEventsDbCoexistence:
                 r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             assert {"runs", "run_sessions", "events", "run_events", "sessions"} <= tables
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
             mode = conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
             assert mode == "wal"
         assert (await store.get(rec.run_id)).status == "running"
@@ -806,7 +807,7 @@ class TestSchemaV2Migration:
         assert (await store.get(rec.run_id)).max_parallel == 3
 
         with sqlite3.connect(db) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
             runs_cols = {r[1] for r in conn.execute("PRAGMA table_info(runs)")}
             assert {"pause_reason", "max_parallel"} <= runs_cols
             assert "max_budget_usd" not in runs_cols and "spent_usd" not in runs_cols
@@ -881,7 +882,7 @@ class TestSchemaV3DriverState:
         rec = await store.create("p", "dag-yaml@1")
         await store.save_driver_state(rec.run_id, {"schema_version": 1})
         with sqlite3.connect(db) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
             tables = {
                 r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
@@ -945,12 +946,12 @@ class TestSchemaV3DriverState:
         await store.save_driver_projection(rec.run_id, {"schema_version": 2})
         assert (await store.load_driver_projection(rec.run_id)) == {"schema_version": 2}
         with sqlite3.connect(db) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
         reopened = RunStore(db)  # 重放幂等：档位与数据不漂
         assert (await reopened.load_driver_projection(rec.run_id)) == {"schema_version": 2}
         with sqlite3.connect(db) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     async def test_snapshot_history_hash_dedup(self, tmp_path):
         """同 blob 哈希去重不重复入行；变化后按 seq 递增追加。"""

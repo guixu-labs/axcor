@@ -36,7 +36,6 @@ KERNEL_MEMBER = "packages/kernel"
 FAKE_DRIVER = "fake-driver"
 # 可选入子集的交付插件（fake-driver 之外）
 DELIVERABLE_PLUGINS = (
-    "agent-traceback",
     "breather",
     "file-provenance",
     "graph",

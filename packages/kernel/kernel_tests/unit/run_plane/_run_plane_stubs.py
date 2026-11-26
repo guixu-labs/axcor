@@ -54,11 +54,12 @@ class StubPool:
 
 
 class StubBus:
-    """测试总线：观察者登记 + outcome/state 回投；broadcast 仅留档。"""
+    """测试总线：观察者登记 + outcome/state 回投；broadcast/ephemeral 仅留档。"""
 
     def __init__(self) -> None:
         self.observers: dict[str, list] = {}
         self.broadcasted: list = []
+        self.ephemeral: list = []
 
     def observe(self, event_type, handler) -> None:
         self.observers.setdefault(getattr(event_type, "value", str(event_type)), []).append(handler)
@@ -74,6 +75,9 @@ class StubBus:
 
     async def broadcast(self, event: Any) -> None:
         self.broadcasted.append(event)
+
+    async def emit_ephemeral(self, event: Any) -> None:
+        self.ephemeral.append(event)
 
 
 class PoolFactsMixin:

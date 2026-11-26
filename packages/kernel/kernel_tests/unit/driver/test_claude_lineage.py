@@ -142,7 +142,7 @@ def test_task_started_without_task_id_is_ignored() -> None:
 
 
 def test_hook_payload_carries_no_parent() -> None:
-    """SubagentStart hook 输入不含派发关系，父级恒为空。"""
+    """SubagentStart hook 输入不含派发关系，父级恒为空（派发号原样透传）。"""
     lineage = ClaudeSubagentLineage()
     start = lineage.hook_payload(_hook_input("explore-id"))
 
@@ -151,6 +151,7 @@ def test_hook_payload_carries_no_parent() -> None:
         "agent_type": "Explore",
         "parent_agent_id": "",
         "session_id": "root-session",
+        "parent_tool_use_id": "",
     }
 
 
