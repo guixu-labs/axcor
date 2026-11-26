@@ -1,6 +1,7 @@
 name: Feature request
 description: Suggest a new capability or improvement for axcor.
 title: "[Feature] "
+labels: ["enhancement"]
 body:
   - type: textarea
     id: use-case
