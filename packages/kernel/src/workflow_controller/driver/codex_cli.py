@@ -23,6 +23,7 @@ import logging
 import os
 import re
 from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
@@ -87,6 +88,11 @@ _GATEWAY_RESPONSES_MODEL_UNSUPPORTED_ERROR = (
 )
 _AUTH_STATUS_RE = re.compile(r"\b(?:401|403)\b")
 _RATE_LIMIT_STATUS_RE = re.compile(r"\b429\b")
+_RATE_LIMIT_RESET_RE = re.compile(
+    r"\b(?:resets?|try again)\s+at\s+(\d{1,2}:\d{2})\b",
+    re.IGNORECASE,
+)
+_RATE_LIMIT_FALLBACK = timedelta(hours=5)
 GATE_TOOL_TIMEOUT_SECONDS = 24 * 60 * 60
 
 
@@ -943,7 +949,7 @@ def _error_events(error: str, session_id: str, iteration: int) -> list[Event]:
     limit_signal = LimitSignal(
         kind=kind,
         scope=scope,
-        reset_at=None,
+        reset_at=(_resolve_codex_reset_at(error) if kind == "rejected" else None),
         utilization=None,
         source="codex_cli:error:text",
     )
@@ -961,6 +967,27 @@ def _error_events(error: str, session_id: str, iteration: int) -> list[Event]:
             data={"error": error},
         ),
     ]
+
+
+def _resolve_codex_reset_at(error: str, *, now: datetime | None = None) -> datetime:
+    """Resolve a Codex rate-limit reset time, using a conservative fallback."""
+    current = now or datetime.now().astimezone()
+    match = _RATE_LIMIT_RESET_RE.search(error)
+    if match is None:
+        return current + _RATE_LIMIT_FALLBACK
+    try:
+        parsed = datetime.strptime(match.group(1), "%H:%M")
+        reset_at = current.replace(
+            hour=parsed.hour,
+            minute=parsed.minute,
+            second=0,
+            microsecond=0,
+        )
+    except ValueError:
+        return current + _RATE_LIMIT_FALLBACK
+    if reset_at <= current:
+        reset_at += timedelta(days=1)
+    return reset_at
 
 
 def _parse_turn_failed(data: dict[str, Any], session_id: str, iteration: int) -> list[Event]:

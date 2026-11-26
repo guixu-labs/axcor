@@ -19,6 +19,7 @@ import contextlib
 import json
 import logging
 from collections import deque
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -34,6 +35,7 @@ from workflow_controller.driver.codex_cli import (
     _codex_proc_env,
     _codex_subagent_fact,
     _drain_stderr,
+    _resolve_codex_reset_at,
     _stderr_tail_text,
 )
 from workflow_controller.driver.hooks import (
@@ -586,6 +588,8 @@ class TestCodexProcEnv:
             EventType.ERROR,
         ]
         assert events[0].data["limit_signal"]["kind"] == kind
+        if kind == "rejected":
+            assert events[0].data["limit_signal"]["reset_at"] is not None
         assert events[0].data["raw"] == message
 
     @pytest.mark.parametrize("message", ["authentication failed", "HTTP 429"])
@@ -598,6 +602,18 @@ class TestCodexProcEnv:
             EventType.ERROR,
         ]
         assert events[1].data["error"] == message
+
+    def test_codex_rate_limit_reset_time_uses_hint_or_five_hour_fallback(self):
+        now = datetime(2026, 11, 26, 9, 0, tzinfo=UTC)
+
+        hinted = _resolve_codex_reset_at(
+            "HTTP 429: too many requests. Try again at 18:30",
+            now=now,
+        )
+        fallback = _resolve_codex_reset_at("HTTP 429: too many requests", now=now)
+
+        assert hinted == now.replace(hour=18, minute=30)
+        assert fallback == now + timedelta(hours=5)
 
 
 class TestCodexGateConfig:

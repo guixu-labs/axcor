@@ -377,7 +377,7 @@ class RunRecord:
 
 > **三个工具事件 `TOOL_USE` / `TOOL_RESULT` / `TOOL_CALL` 的对齐**：四路 driver（`claude_sdk` / `claude_cli` / `opencode` / `codex_cli`）+ HTTP hook server + `session_api` 重放路径统一产出这三个独立事件，data shape 与对齐设计见 [事件系统文档 §1.3](event-system.md#13-工具事件对齐设计)。`TOOL_CALL` 是归一化的「一次工具调用 + 结果」摘要事件，`data = {tool_use_id, name, arg, is_error, error?}`；三路 driver 与 HookServer 的 `tool_use_id` 对应同次 `TOOL_USE` / `TOOL_RESULT`，可供消费方关联。`arg` 由 `extract_tool_arg` 从 input 抽取代表性参数摘要（file_path/command/pattern/query/url），`error` 仅在 `is_error=true` 时填充，由 `extract_tool_error` 直接取对应 tool_result content 的原始字符串（不做额外解析/截断，长内容折叠交给前端）；前端 VirtualLog 据此在失败行下新增续行展示具体原因，并显式跳过 `tool_use`/`tool_result` 事件。`TOOL_RESULT.data` 必含 `tool_name`（供 `breather._on_notify_skill_hook` 四路命中）。
 
-> `subagent_start` / `subagent_progress` / `subagent_stop` 是 sub-agent 跟踪的三个事件（worker 派生的 subagent 经它们可观测）——按生命周期阶段拆成独立 event_type，消费者按类型订阅；`rate_limit_event` 是**driver 无关的归一化限流信号**——已有三路 driver（claude_cli 结构化 `rate_limit_info` / claude_sdk 异常文本正则 / opencode error dict `statusCode`）各自把上游限流·鉴权错误翻译成统一的 `data.limit_signal`（`{kind, scope, reset_at, utilization, source}`）并 emit 该事件，`data.raw` 保留原生负载供观测；`codex_cli` 当前对 `turn.failed` / 顶层 `error` 保守归一化为 `ERROR`，等上游提供稳定限流字段后再补 `RATE_LIMIT` 翻译。`LimitDetector` 单路径消费该事件触发 key 轮换，不再按事件类型 / error 是 str 还是 dict 分流。撞限流时 driver **同时** emit `ERROR`（可观测日志，前端 VirtualLog 照常渲染）+ `RATE_LIMIT`（控制信号），把「日志看到什么」与「触发轮换」解耦。`delete_session()` 会同时清这三张表（events / evaluations / loop_results + sessions + handoff_relations）。
+> `subagent_start` / `subagent_progress` / `subagent_stop` 是 sub-agent 跟踪的三个事件（worker 派生的 subagent 经它们可观测）——按生命周期阶段拆成独立 event_type，消费者按类型订阅；`rate_limit_event` 是**driver 无关的归一化限流信号**——四路 driver（claude_cli 结构化 `rate_limit_info` / claude_sdk 异常文本正则 / opencode error dict `statusCode` / codex_cli 错误文本）各自把上游限流·鉴权错误翻译成统一的 `data.limit_signal`（`{kind, scope, reset_at, utilization, source}`）并 emit 该事件，`data.raw` 保留原生负载供观测；Codex 错误文本无结构化恢复字段，能识别 `resets at HH:MM` / `try again at HH:MM` 时解析为当日或次日时间，否则按 5 小时保守窗口回退。`LimitDetector` 单路径消费该事件触发 key 轮换，不再按事件类型 / error 是 str 还是 dict 分流。撞限流时 driver **同时** emit `ERROR`（可观测日志，前端 VirtualLog 照常渲染）+ `RATE_LIMIT`（控制信号），把「日志看到什么」与「触发轮换」解耦。`delete_session()` 会同时清这三张表（events / evaluations / loop_results + sessions + handoff_relations）。
 
 ## 数据流（Start Session）
 
@@ -734,9 +734,13 @@ AuthRotator
 │           reviewer 路径剥路由前缀。配置指纹未变时复用持久化结果；旧配置在
 │           第一次使用前检测，不在进程启动时批量调用模型。
 │           设置页按行重测通过独立接口指定 provider 序号并以 force=True
-│           跳过验证缓存；现有 /auth/test 仍检测当前 active provider。
+│           跳过验证缓存；现有 /auth/test 仍检测当前 active provider。重测
+│           返回 success 时，EXHAUSTED 的全局配额状态恢复为 ACTIVE/UNUSED，
+│           并清理 exhausted_at、reset_at、scope 与该 provider 的恢复任务；
+│           auth_error 造成的能力 INVALID 不因此连坐恢复。
 ├── 轮转：rotate_to_first_available / rotate_to_next_key / rotate_key /
-│         schedule_pending_resets（退避后自动恢复 key）
+│         schedule_pending_resets（按 provider 调度 reset；到期把该
+│         provider 从 EXHAUSTED 恢复为 ACTIVE/UNUSED）
 ├── 写入：set_keys / delete_provider / set_api_key / set_api_config / set_global_settings /
 │         sync_providers_from_config
 ├── 限流回调：on_limit_detected / on_rate_limit / on_quota_warning /
@@ -756,7 +760,8 @@ AuthRotator
                  · settings.conf 读写（settings.py）· 序列化（persistence.py）
 ```
 
-Provider 的全局 `status` 只表达配额可用性；driver 的 401/403、路由错误、缺少
+Provider 的全局 `status` 只表达配额可用性；限流轮换与 per-provider reset task
+都会持久化 `reset_at`，到期或行内重测成功即恢复该 provider。driver 的 401/403、路由错误、缺少
 可执行文件或超时只使对应 `worker_validation` 失效，Reviewer 只有 HTTP 401/403
 才使 `reviewer_validation` 失效，瞬时 5xx 等请求错误仅向上抛出。失败探测不写
 进程内缓存；持久化的 INVALID 结果只在短退避窗口内复用，窗口结束后首次使用会
@@ -776,7 +781,9 @@ provider-bound catalog 路径）整体身份跨
 重排 Provider 不触发无关重测。删除走专用 AuthAPI 路径：先拒绝会话快照仍引用目标索引或更高索引的请求（删除会使后续索引前移，历史会话仍可重启），再核对内存 Provider 与 `settings.conf` 对应条目的身份并移除。仅同步剩余条目的内存状态，不重新探测 Worker/Reviewer；配置或索引不匹配则拒绝，避免误删。Worker 候选
 解析按 session runtime 过滤绑定 runtime 及验证结果；存在 Provider 但无 runtime
 匹配时会话启动直接失败，只有 Provider 列表为空的 env-only 模式允许继续。429
-仍沿用全局 exhausted 轮换。auth-switch 切换 Provider 后下一轮冷启动 driver，
+先走 session-bound provider 轮换；无替代时保留原绑定并进入 EXHAUSTED，同时
+调度 `reset_at` 对应的恢复任务（Codex 无恢复时间则用 5 小时保守窗口）。
+auth-switch 切换 Provider 后下一轮冷启动 driver，
 不 resume 旧 runtime session，避免旧路由状态污染替换 Provider。
 
 > **OAuth 并行通道**：`check_auth()` 始终测 API key；**仅在 `runtime=claude_cli` 时**额外跑一次空 env 的 CLI 探针测 OAuth token（`_last_oauth_ok`）。SDK runtime 不测 OAuth。GLM 等第三方端点走 API key（Bearer `ANTHROPIC_AUTH_TOKEN`），不依赖 OAuth。

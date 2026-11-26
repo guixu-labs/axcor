@@ -42,7 +42,7 @@ class Event:
 | | `USER_MESSAGE` | 用户输入 | driver（opencode 不回显用户输入，主动发）| 前端展示 |
 | | `STEP_FINISH` | step/turn 结果（含 usage）| driver | auth_rotator、breather（抽 usage）、reviewer |
 | | `ERROR` | 错误（**可观测日志**）| driver | 前端展示；LimitDetector 不消费（限流信号已由 driver 翻成 `RATE_LIMIT`，ERROR 不再承载轮换决策）|
-| | `RATE_LIMIT` | **driver 无关的归一化限流事件**（`data.limit_signal={kind,scope,reset_at,utilization,source}` + `data.raw` 原生负载）| 三路 driver（claude_cli 结构化 `rate_limit_info` / claude_sdk 异常文本正则 / opencode error dict `statusCode`）| LimitDetector（on_rate_limit / on_limit_detected / on_quota_warning）|
+| | `RATE_LIMIT` | **driver 无关的归一化限流事件**（`data.limit_signal={kind,scope,reset_at,utilization,source}` + `data.raw` 原生负载）| 四路 driver（claude_cli 结构化 `rate_limit_info` / claude_sdk 异常文本正则 / opencode error dict `statusCode` / codex_cli 错误文本）| LimitDetector（on_rate_limit / on_limit_detected / on_quota_warning）|
 | **子代理** | `SUBAGENT_START` | 子代理启动 | orchestrator | watchdog、agent_traceback（**可被拦截**——冻文件态快照，阻塞串行）、前端 |
 | | `SUBAGENT_PROGRESS` | 子代理增量消息流（opencode 轮询、claude 暂未支持）| orchestrator | watchdog、前端 |
 | | `SUBAGENT_STOP` | 子代理结束（含 token/content/messages）| orchestrator | watchdog、breather（handoff 检查时机）、前端 |

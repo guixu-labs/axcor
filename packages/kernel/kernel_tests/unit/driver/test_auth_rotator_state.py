@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from workflow_controller.core.auth_rotator import AuthMode, AuthRotator
+from workflow_controller.core.auth_rotator.persistence import KeyStatus
 from workflow_controller.core.auth_rotator.signal import LimitMatch
 
 
@@ -135,6 +136,65 @@ async def test_reset_task_fires_with_60s_buffer(tmp_path: Path) -> None:
     # we should still be in API mode after only 200ms.
     await asyncio.sleep(0.2)
     assert rotator.get_mode() == AuthMode.API, "Reset fired too early — 60s buffer not applied"
+
+
+@pytest.mark.asyncio
+async def test_bound_rate_limit_schedules_per_provider_reset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """session-bound 429 轮换也按 provider 调度恢复，而非仅启动时恢复。"""
+    (tmp_path / "settings.conf").write_text("api_keys:\n  - sk\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    rotator = AuthRotator(
+        state_path=tmp_path / "auth_state.json",
+        env_path=tmp_path / ".env",
+        runtime="codex_cli",
+    )
+    scheduled: list[tuple[int, float]] = []
+
+    async def capture_reset(provider_index: int, delay_seconds: float) -> None:
+        scheduled.append((provider_index, delay_seconds))
+
+    monkeypatch.setattr(rotator, "_sleep_and_reset", capture_reset)
+    reset_at = datetime.now(tz=UTC) + timedelta(hours=1)
+
+    replacement = rotator.rotate_bound_provider(
+        0,
+        scope="rate_limit",
+        reset_at=reset_at,
+        runtime="codex_cli",
+    )
+    await asyncio.sleep(0)
+
+    assert replacement is None
+    assert rotator.get_provider(0).status is KeyStatus.EXHAUSTED
+    assert rotator.get_provider(0).reset_at == reset_at
+    assert scheduled == [(0, pytest.approx(3600 + 60))]
+    assert set(rotator._reset_tasks) == {0}
+
+
+@pytest.mark.asyncio
+async def test_provider_reset_restores_exhausted_state(tmp_path: Path) -> None:
+    """reset task 到期后恢复该 provider 的全局配额状态。"""
+    (tmp_path / "settings.conf").write_text("api_keys:\n  - sk\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    rotator = AuthRotator(
+        state_path=tmp_path / "auth_state.json",
+        env_path=tmp_path / ".env",
+        runtime="codex_cli",
+    )
+    provider = rotator.get_provider(0)
+    provider.status = KeyStatus.EXHAUSTED
+    provider.reset_at = datetime.now(tz=UTC)
+    provider.scope = "rate_limit"
+
+    await rotator._sleep_and_reset(0, 0)
+
+    assert provider.status is KeyStatus.ACTIVE
+    assert provider.exhausted_at is None
+    assert provider.reset_at is None
+    assert provider.scope is None
 
 
 def test_on_quota_warning_invokes_registered_callback(tmp_path: Path) -> None:

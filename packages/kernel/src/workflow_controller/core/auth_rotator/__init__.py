@@ -125,7 +125,7 @@ class AuthRotator:
         self._reset_at: datetime | None = snapshot.reset_at
         self._active_index: int = snapshot.active_provider_index
         self._providers: list[AuthProvider] = snapshot.providers or []
-        self._reset_task: asyncio.Task[None] | None = None
+        self._reset_tasks: dict[int, asyncio.Task[None]] = {}
         self._last_limit_event_at: float = -999.0
         self._dedup_window_seconds: float = 60.0
         self._last_auth_check_ok: bool = True
@@ -257,18 +257,21 @@ class AuthRotator:
         tasks that were lost on server restart.
         """
         now = datetime.now(tz=UTC)
-        for p in self._providers:
-            if (
-                p.status in (KeyStatus.EXHAUSTED, KeyStatus.INVALID)
-                and p.reset_at
-                and p.reset_at > now
-            ):
-                self._schedule_reset_task(p.reset_at)
+        for index, p in enumerate(self._providers):
+            if p.status == KeyStatus.EXHAUSTED and p.reset_at and p.reset_at > now:
+                self._schedule_provider_reset(index, p.reset_at)
                 logger.info(
                     "AuthRotator: re-scheduled reset for %s (reset_at=%s)",
                     p.provider_type.value,
                     p.reset_at.isoformat(),
                 )
+        active = self._active_provider
+        self._reset_at = (
+            active.reset_at
+            if 0 <= self._active_index < len(self._providers)
+            and active.status == KeyStatus.EXHAUSTED
+            else None
+        )
 
     def get_mode(self) -> AuthMode:
         return self._mode
@@ -420,6 +423,10 @@ class AuthRotator:
             provider.exhausted_at = datetime.now(tz=UTC)
             provider.reset_at = reset_at
             provider.scope = scope
+            if reset_at is not None:
+                self._schedule_provider_reset(provider_index, reset_at)
+            if self._active_index == provider_index:
+                self._reset_at = reset_at
         replacement = next(
             (
                 idx
@@ -430,6 +437,7 @@ class AuthRotator:
         )
         if replacement is not None and self._active_index == provider_index:
             self._set_active(replacement)
+            self._reset_at = None
         else:
             self._persist()
         return replacement
@@ -743,6 +751,8 @@ class AuthRotator:
         # 时结果是本次实测所得，来源记 "probe"——sync 据此把它当探测缓存
         # （显式配置被删除时可清掉）而非不可撤销的显式值。
         self._apply_candidate_result(provider_index, provider, result, entry_kind)
+        if result.get("success") and provider.status == KeyStatus.EXHAUSTED:
+            self._restore_exhausted_provider(provider_index)
         self._persist()
         return result
 
@@ -924,9 +934,11 @@ class AuthRotator:
             else:
                 new_providers.append(_new_provider_from_entry(pk, kind_url))
 
+        self._cancel_reset_task()
         self._providers = new_providers
         self._ensure_unique_custom_names()
         self._reconcile_after_sync()
+        self.schedule_pending_resets()
 
     def delete_provider(self, provider_index: int) -> bool:
         """Remove one configured provider without probing the remaining pool."""
@@ -1094,7 +1106,6 @@ class AuthRotator:
 
     def rotate_key(self) -> bool:
         """Rotate to next available API key. Returns True if rotated."""
-        self._cancel_reset_task()
         self._reset_at = None
         for i in range(1, len(self._providers)):
             idx = (self._active_index + i) % len(self._providers)
@@ -1594,14 +1605,7 @@ class AuthRotator:
 
     def _reactivate_exhausted_active(self) -> None:
         """Reset the active provider to ACTIVE after a successful key check."""
-        if self._providers and 0 <= self._active_index < len(self._providers):
-            p = self._providers[self._active_index]
-            if p.status in (KeyStatus.EXHAUSTED, KeyStatus.INVALID):
-                p.status = KeyStatus.ACTIVE
-                p.exhausted_at = None
-                p.reset_at = None
-                p.scope = None
-                self._persist()
+        self._restore_exhausted_provider(self._active_index)
 
     async def _maybe_probe_kind(
         self,
@@ -1970,16 +1974,17 @@ class AuthRotator:
             self._active_index,
             self._mode.value,
         )
+        original_active_index = self._active_index
         self._mark_exhausted(scope=scope, reset_at=reset_at)
+        if reset_at is not None:
+            self._schedule_provider_reset(self._active_index, reset_at)
         if scope == "5h":
             self._reset_at = reset_at
-            self._schedule_reset_task(reset_at)
         else:
-            self._cancel_reset_task()
             self._reset_at = None
 
-        if not self._try_rotate_or_fallback():
-            return
+        if self._try_rotate_or_fallback() and self._active_index != original_active_index:
+            self._reset_at = None
 
     def _try_rotate_or_fallback(self) -> bool:
         """Try rotate; returns True if key was rotated."""
@@ -2034,33 +2039,60 @@ class AuthRotator:
 
         return GlobalSettings.load(self._config_dir / "settings.conf")
 
-    def _schedule_reset_task(self, reset_at: datetime | None) -> None:
-        self._cancel_reset_task()
-        if reset_at is None:
+    def _schedule_provider_reset(self, provider_index: int, reset_at: datetime | None) -> None:
+        """Schedule one provider's quota restoration after the reset buffer."""
+        self._cancel_provider_reset(provider_index)
+        if reset_at is None or not (0 <= provider_index < len(self._providers)):
             return
         delay_seconds = (reset_at - datetime.now(tz=UTC)).total_seconds() + _RESET_BUFFER_SECONDS
         if delay_seconds <= 0:
-            self._reset_at = None
+            self._restore_exhausted_provider(provider_index)
             return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._reset_task = loop.create_task(self._sleep_and_reset(delay_seconds))
+        self._reset_tasks[provider_index] = loop.create_task(
+            self._sleep_and_reset(provider_index, delay_seconds)
+        )
 
-    async def _sleep_and_reset(self, delay_seconds: float) -> None:
+    async def _sleep_and_reset(self, provider_index: int, delay_seconds: float) -> None:
         try:
             await asyncio.sleep(delay_seconds)
         except asyncio.CancelledError:
             return
-        if self._mode == AuthMode.API and self._reset_at is not None:
-            self._reset_at = None
-        self._persist()
+        self._reset_tasks.pop(provider_index, None)
+        self._restore_exhausted_provider(provider_index)
 
     def _cancel_reset_task(self) -> None:
-        if self._reset_task is not None and not self._reset_task.done():
-            self._reset_task.cancel()
-        self._reset_task = None
+        for task in self._reset_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._reset_tasks.clear()
+
+    def _cancel_provider_reset(self, provider_index: int) -> None:
+        task = self._reset_tasks.pop(provider_index, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _restore_exhausted_provider(self, provider_index: int) -> None:
+        """Restore one exhausted provider's quota state without touching INVALID."""
+        if not (0 <= provider_index < len(self._providers)):
+            return
+        provider = self._providers[provider_index]
+        if provider.status != KeyStatus.EXHAUSTED:
+            return
+        reset_at = provider.reset_at
+        self._cancel_provider_reset(provider_index)
+        provider.status = (
+            KeyStatus.ACTIVE if provider_index == self._active_index else KeyStatus.UNUSED
+        )
+        provider.exhausted_at = None
+        provider.reset_at = None
+        provider.scope = None
+        if self._reset_at is not None and self._reset_at == reset_at:
+            self._reset_at = None
+        self._persist()
 
     def _persist(self) -> None:
         snap = AuthStateSnapshot(

@@ -387,6 +387,47 @@ async def test_set_keys_validated_persists_preset_catalog_path(
 
 
 @pytest.mark.asyncio
+async def test_validate_provider_restores_exhausted_codex_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex 行内重测成功后，全局 EXHAUSTED 状态与 reset 调度一起恢复。"""
+    captured = _codex_preset_probe_env(monkeypatch)
+
+    async def reviewer_ok(self, prompt: str, **kwargs) -> HttpResult:
+        return HttpResult(text="OK", is_error=False, error="")
+
+    monkeypatch.setattr(AnthropicHttpClient, "request", reviewer_ok)
+    rotator = _codex_rotator(tmp_path)
+    await rotator.set_keys_validated(
+        [
+            {
+                "key": "sk",
+                "model": "glm-5.3",
+                "base_url": "https://open.bigmodel.cn/api/v1",
+                "runtime": "codex_cli",
+            }
+        ]
+    )
+    provider = rotator.get_provider(0)
+    reset_at = datetime.now(tz=UTC) + timedelta(hours=5)
+    provider.status = KeyStatus.EXHAUSTED
+    provider.exhausted_at = datetime.now(tz=UTC)
+    provider.reset_at = reset_at
+    provider.scope = "rate_limit"
+
+    result = await rotator.validate_provider(0, force=True)
+
+    assert result["success"] is True
+    assert captured["query"]["env"]["model_catalog_path"]
+    assert provider.status is KeyStatus.ACTIVE
+    assert provider.exhausted_at is None
+    assert provider.reset_at is None
+    assert provider.scope is None
+    assert not rotator._reset_tasks
+
+
+@pytest.mark.asyncio
 async def test_unknown_codex_provider_requires_catalog_before_probe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
