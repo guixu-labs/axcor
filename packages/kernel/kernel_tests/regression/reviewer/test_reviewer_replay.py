@@ -22,7 +22,7 @@ the resulting decision against the fixture's `expected` block.
 
 The point: as you iterate on hook_decision.py's prompt template, this
 suite measures whether the change actually fixed historical bugs without
-breaking the positive case (fixture 06).
+breaking cases that should let the worker exit.
 
 Tests are marked `live_llm` — `pytest` alone skips them; opt in with
 `pytest --live`. Each fixture is one parametrize case so pytest reports
@@ -264,7 +264,7 @@ async def test_reviewer_replay(
             _assert_auq(decision, expected, run_label)
         results.append(decision)
 
-    # ---- stability assertion (fixture 7) ----
+    # ---- stability assertion ----
     if repeat > 1:
         stab = fixture.get("stability_assertion", {})
         if stab.get("same_action", False):

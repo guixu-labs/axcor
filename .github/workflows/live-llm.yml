@@ -34,14 +34,44 @@ jobs:
         run: uv sync --locked
 
       - name: 运行实模测试
+        shell: bash
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ vars.LIVE_LLM_ANTHROPIC_BASE_URL }}
           ANTHROPIC_MODEL: ${{ vars.LIVE_LLM_ANTHROPIC_MODEL }}
+          LIVE_LLM_ANTHROPIC_MODELS: ${{ vars.LIVE_LLM_ANTHROPIC_MODELS }}
         run: |
           : "${ANTHROPIC_AUTH_TOKEN:?Configure LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN in the live-llm environment}"
           : "${ANTHROPIC_BASE_URL:?Configure the LIVE_LLM_ANTHROPIC_BASE_URL variable}"
-          : "${ANTHROPIC_MODEL:?Configure the LIVE_LLM_ANTHROPIC_MODEL variable}"
+          model_list="${LIVE_LLM_ANTHROPIC_MODELS:-${ANTHROPIC_MODEL:-}}"
+          model_list="${model_list//$'\n'/ }"
+          read -r -a models <<< "${model_list//,/ }"
+          if (( ${#models[@]} == 0 )); then
+            echo "Configure LIVE_LLM_ANTHROPIC_MODELS or LIVE_LLM_ANTHROPIC_MODEL" >&2
+            exit 1
+          fi
+
+          logs_dir=$(mktemp -d)
+          trap 'rm -rf -- "$logs_dir"' EXIT
+          pids=()
           # 只跑固定的 reviewer replay 目录：合并队列执行 base+PR 合并代码，
           # 不能按 marker 全仓选择测试，否则 fork PR 可在别处新增打标测试窃取实模凭证。
-          uv run --locked pytest -q --live packages/kernel/kernel_tests/regression/reviewer/
+          for index in "${!models[@]}"; do
+            ANTHROPIC_MODEL="${models[$index]}" \
+              uv run --locked pytest -q --live packages/kernel/kernel_tests/regression/reviewer/ \
+              > "$logs_dir/$index.log" 2>&1 &
+            pids+=("$!")
+          done
+
+          status=0
+          for index in "${!models[@]}"; do
+            result=0
+            wait "${pids[$index]}" || result=$?
+            printf '::group::%s (exit %s)\n' "${models[$index]}" "$result"
+            cat "$logs_dir/$index.log"
+            printf '%s\n' '::endgroup::'
+            if (( result != 0 )); then
+              status=1
+            fi
+          done
+          exit "$status"

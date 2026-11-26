@@ -2,7 +2,7 @@ name: auq_session_safety_excuse
 kind: auq
 
 description: |
-  通用场景（领域无关）：fixture 02 / 10 的"partial 推荐"变种第三种——worker 不用
+  通用场景（领域无关）：fixture 02 / 06 的"partial 推荐"变种第三种——worker 不用
   "上下文耗尽"也不用"优先级分批"，而是用**"避免 token 超额"**、**"分会话交付"**
   等措辞。
   泛化测试：验证 reviewer 不被各种"会话管理 / 资源管理"借口骗。

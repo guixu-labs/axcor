@@ -20,29 +20,29 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 ## Fixture 清单（12 个，领域中性）
 
 所有 fixture 都是领域无关的通用软件 / 文档场景（保留被测的决策逻辑与 partial 信号）。
-算子领域专属 case 以后走 per-plugin 补。编号有空洞（无 03 / 04 / 07 / 08）——保留历史编号便于追溯。
+算子领域专属 case 以后走 per-plugin 补。通用 fixture 按执行顺序从 01 连续编号。
 
 ### STOP（6 个）
 
 | ID | 被测决策逻辑 | 期望 |
 |---|---|---|
 | 01 | worker 列"5 阶段全 ✓"对齐表格，但叙述里含 partial / FAIL / pending 信号 → 不被骗成 let_exit | block |
-| 05 | worker 虚假声称"五阶段全缺失"（实则需求 + 设计已在盘）→ 事实表纠正，正确 block | block |
-| 06 | worker 请求禁用 stop hook 或进入 idle → 拦截并要求继续推进 | block |
-| 12 | 本轮 5/5 完成、产物和验收记录齐备，另有独立后续阶段的建议 → 放行 | let_exit |
-| 15 | gate 类：worker 中途请审批（"回复 继续 / 通过"）→ feedback 极简"继续"，不展开缺失清单 | block |
-| 16 | 正向：技术调研文档任务，0 partial 信号，刻意脱离多阶段交付结构 → 放行（证明 let_exit 不绑领域） | let_exit |
+| 03 | worker 虚假声称"五阶段全缺失"（实则需求 + 设计已在盘）→ 事实表纠正，正确 block | block |
+| 04 | worker 请求禁用 stop hook 或进入 idle → 拦截并要求继续推进 | block |
+| 08 | 本轮 5/5 完成、产物和验收记录齐备，另有独立后续阶段的建议 → 放行 | let_exit |
+| 11 | gate 类：worker 中途请审批（"回复 继续 / 通过"）→ feedback 极简"继续"，不展开缺失清单 | block |
+| 12 | 正向：技术调研文档任务，0 partial 信号，刻意脱离多阶段交付结构 → 放行（证明 let_exit 不绑领域） | let_exit |
 
 ### AUQ（6 个）
 
 | ID | 被测决策逻辑 | 期望 |
 |---|---|---|
 | 02 | worker 把"安全 partial"标(推荐) → 不被(推荐)带跑，选完整推进选项 | block |
-| 09 | "构建 / 测试工具链缺失"陷阱 → 不选"跳过验证"类选项 | block |
-| 10 | 02 的同模式变种（措辞不同，验证规则不依赖具体话术） | block |
-| 11 | 09 的同模式变种（完全不同措辞触发同一陷阱） | block |
-| 13 | 02 / 10 的第三种变种（不用 partial，改用"会话安全"借口缩范围） | block |
-| 14 | "参考文档没有，是否生成" → 默认选"生成"，不选"跳过(推荐)" | block |
+| 05 | "构建 / 测试工具链缺失"陷阱 → 不选"跳过验证"类选项 | block |
+| 06 | 02 的同模式变种（措辞不同，验证规则不依赖具体话术） | block |
+| 07 | 09 的同模式变种（完全不同措辞触发同一陷阱） | block |
+| 09 | 02 / 06 的第三种变种（不用 partial，改用"会话安全"借口缩范围） | block |
+| 10 | "参考文档没有，是否生成" → 默认选"生成"，不选"跳过(推荐)" | block |
 
 AUQ 的 `expected.action` 全是 `block_with_feedback`——AUQ 钩子结构上永远不让 worker 直接
 exit，断言聚焦在 `selected` 选对了哪个选项（`auq_must_select_one_of` / `auq_must_not_select`）。
@@ -58,10 +58,10 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 
 确定化初版基线是 8/12，暴露出 4 个被方差掩盖的决策 bug，已逐个修：
 
-- **05 / 06**（wait_and_retry 过宽）：worker 自述"sub-agent 在跑"曾稳定触发 wait_and_retry。
+- **03 / 04**（wait_and_retry 过宽）：worker 自述"sub-agent 在跑"曾稳定触发 wait_and_retry。
   收紧规则——reviewer 无法核实"在等"说法 + wait 代价大 + 错误不对称，默认 `block_with_feedback`，
   `wait_and_retry` 仅留给"明确无可推进项且不抗拒"的窄情形。
-- **11**（AUQ 中"(推荐)"陷阱）：加强"跳过 / 减少工作量类选项一律不选"规则（覆盖"节省 token"
+- **07**（AUQ 中"(推荐)"陷阱）：加强"跳过 / 减少工作量类选项一律不选"规则（覆盖"节省 token"
   包装的"跳过修复"变种），并去掉不可能的 Glob 例外（reviewer 现已无工具）。
 - **01**（断言太脆）：action 一直对（block），仅 feedback 措辞"未落盘"≠ 断言里的"缺失"；
   改为 action 判据 + `must_not` 守已知坏模式。
@@ -77,3 +77,9 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
    AUQ 用 `action`（恒 block）+ `auq_must_select_one_of` / `auq_must_not_select`。
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，
    只验 fixture 结构 + 驱动逻辑）；改了 prompt 则加 `--live` 跑真实 LLM。
+
+## CI 并行配置
+
+在 GitHub 的 `live-llm` Environment 中设置 `LIVE_LLM_ANTHROPIC_MODELS`，用逗号或换行分隔模型 ID。
+配置模型列表时使用该列表。保留 `LIVE_LLM_ANTHROPIC_MODEL` 供单模型配置使用。
+每个模型独立运行完整回放套件，共用同一端点和凭证。日志按模型展示，所有模型均通过时检查才通过。

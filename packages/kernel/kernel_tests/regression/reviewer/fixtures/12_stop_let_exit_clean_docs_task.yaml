@@ -2,7 +2,7 @@ name: stop_let_exit_clean_docs_task
 kind: stop_hook
 
 description: |
-  通用场景（领域无关）·正向 fixture，刻意脱离 fixture 12 的"多阶段交付"结构：
+  通用场景（领域无关）·正向 fixture，刻意脱离 fixture 08 的"多阶段交付"结构：
   这是一次**技术调研文档**任务，worker 自述文档四节齐备、已自查、无 pending，
   没有任何 partial 信号关键词（FAIL / 部分 / pending / 未完成 / TODO / in-flight）。
   按 let_exit 条件 reviewer 应放行。
