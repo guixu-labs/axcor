@@ -80,6 +80,6 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 
 ## CI 并行配置
 
-在 GitHub 的 `live-llm` Environment 中设置 `LIVE_LLM_ANTHROPIC_MODELS`，用逗号或换行分隔模型 ID。
-配置模型列表时使用该列表。保留 `LIVE_LLM_ANTHROPIC_MODEL` 供单模型配置使用。
+在 GitHub 的 `live-llm` Environment 中设置必填变量 `ANTHROPIC_MODELS`。
+可填写一个模型 ID，或用逗号或换行分隔多个模型 ID。
 每个模型独立运行完整回放套件，共用同一端点和凭证。日志按模型展示，所有模型均通过时检查才通过。
