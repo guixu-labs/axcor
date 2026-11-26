@@ -28,6 +28,7 @@ from workflow_controller.config.settings import (
 )
 from workflow_controller.core.evaluator import PassThroughEvaluator
 from workflow_controller.core.orchestrator import Orchestrator
+from workflow_controller.session.session import Session
 
 
 @pytest.fixture
@@ -90,7 +91,9 @@ class TestOrchestrator:
         self,
         monkeypatch,
         orchestrator,
+        tmp_path,
     ):
+        from workflow_controller.hooks.hook_config import HookConfigGenerator
         from workflow_controller.hooks.server import HookServer, HookServerStartupError
 
         cleanup_order: list[str] = []
@@ -101,18 +104,22 @@ class TestOrchestrator:
         async def stop_hook_server(_hook_server: HookServer) -> None:
             cleanup_order.append("stop")
 
-        def fail_hook_refresh(_project_dir: object) -> None:
+        def fail_hook_refresh(_self: object, _project_dir: object) -> None:
             raise ValueError("settings write failed")
 
         monkeypatch.setattr(HookServer, "start", start_hook_server)
         monkeypatch.setattr(HookServer, "stop_server", stop_hook_server)
-        monkeypatch.setattr(orchestrator, "generate_hook_config", fail_hook_refresh)
+        monkeypatch.setattr(HookConfigGenerator, "write_settings", fail_hook_refresh)
         monkeypatch.setattr(orchestrator, "_maybe_start_reviewer", AsyncMock())
         orchestrator.config.runtime = "claude_cli"
         orchestrator.config.hook_server = HookServerConfig(
             enabled=True,
             host="127.0.0.1",
-            port=18999,
+        )
+        orchestrator = Orchestrator(
+            orchestrator.config,
+            default_project_dir=tmp_path,
+            hook_server_port_override=18999,
         )
 
         with pytest.raises(
@@ -142,8 +149,12 @@ class TestOrchestrator:
         orchestrator.config.runtime = "claude_cli"
         orchestrator.config.hook_server = HookServerConfig(
             enabled=True,
-            port=18999,
             host="127.0.0.1",
+        )
+        orchestrator = Orchestrator(
+            orchestrator.config,
+            default_project_dir=tmp_path,
+            hook_server_port_override=18999,
         )
         monkeypatch.setattr(HookServer, "start", AsyncMock())
         monkeypatch.setattr(orchestrator, "_maybe_start_reviewer", AsyncMock())
@@ -198,8 +209,12 @@ class TestOrchestrator:
         orchestrator.config.runtime = "claude_sdk"
         orchestrator.config.hook_server = HookServerConfig(
             enabled=True,
-            port=18999,
             host="127.0.0.1",
+        )
+        orchestrator = Orchestrator(
+            orchestrator.config,
+            default_project_dir=tmp_path,
+            hook_server_port_override=18999,
         )
         orchestrator.config.reviewer = ReviewerConfig(enabled=False)
         monkeypatch.setattr(HookServer, "start", AsyncMock())
@@ -226,6 +241,78 @@ class TestOrchestrator:
         assert hook["url"] == "http://127.0.0.1:18999/hooks/stop"
         await orchestrator.stop_session(session.id)
         await orchestrator.shutdown()
+
+    async def test_claude_cli_hooks_use_effective_hook_port(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        from workflow_controller.hooks.server import HookServer
+
+        config = AppConfig(
+            project_dir=str(tmp_path),
+            runtime="claude_cli",
+            hook_server=HookServerConfig(
+                enabled=True,
+                host="127.0.0.1",
+            ),
+            reviewer=ReviewerConfig(enabled=False),
+        )
+        orchestrator = Orchestrator(
+            config,
+            default_project_dir=tmp_path,
+            hook_server_port_override=18999,
+        )
+        monkeypatch.setattr(HookServer, "start", AsyncMock())
+        monkeypatch.setattr(orchestrator, "_maybe_start_reviewer", AsyncMock())
+
+        await orchestrator.start()
+
+        settings_file = tmp_path / ".claude" / "settings.json"
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        hook = data["hooks"]["Stop"][0]["hooks"][0]
+        assert orchestrator.effective_hook_server_port == 18999
+        assert orchestrator.hook_server_base_url == "http://127.0.0.1:18999"
+        assert orchestrator._hook_server.port == 18999
+        assert hook["url"] == "http://127.0.0.1:18999/hooks/stop"
+        await orchestrator.shutdown()
+
+    async def test_codex_cli_hooks_use_effective_hook_port(
+        self,
+        tmp_path,
+    ):
+        from workflow_controller.hooks.server import HookServer
+
+        config = AppConfig(
+            project_dir=str(tmp_path),
+            runtime="codex_cli",
+            hook_server=HookServerConfig(
+                enabled=True,
+                host="127.0.0.1",
+            ),
+            reviewer=ReviewerConfig(enabled=False),
+        )
+        orchestrator = Orchestrator(
+            config,
+            default_project_dir=tmp_path,
+            hook_server_port_override=18999,
+        )
+        session = Session(
+            config=SessionConfig(
+                name="codex-worker",
+                role="worker",
+                cwd=str(tmp_path),
+                runtime="codex_cli",
+                initial_prompt="test",
+            )
+        )
+        getattr(orchestrator.pool, "_sessions")[session.id] = session
+        orchestrator._hook_server = HookServer(port=18999, host="127.0.0.1")
+        orchestrator._refresh_runtime_hooks(session.config.runtime, tmp_path)
+        driver_hooks = orchestrator.make_driver_hooks(session.id)
+
+        assert driver_hooks.file_change_hook_url == "http://127.0.0.1:18999"
+        assert (tmp_path / ".codex" / "hooks.json").exists()
 
     async def test_register_session_captures_task_started(self, orchestrator):
         """sdk 路径的 TaskStartedMessage（subtype=task_started）也要存 sdk_session_id，

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from workflow_controller.config.settings import AppConfig
 
@@ -105,7 +107,14 @@ class TestFromYamlEncoding:
 
         # hook_server, project_dir, etc. should also show up
         assert "hook_server" in raw
-        assert raw["hook_server"]["port"] == 18765
+        assert "port" not in raw["hook_server"]
+
+    @staticmethod
+    def test_yaml_rejects_hook_server_port(tmp_path: Path) -> None:
+        path = tmp_path / "legacy.yaml"
+        path.write_text("hook_server:\n  port: 18765\n", encoding="utf-8")
+        with pytest.raises(ValidationError, match="port"):
+            AppConfig.from_yaml(path)
 
 
 class TestUnknownSectionRoundTrip:

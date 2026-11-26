@@ -148,8 +148,11 @@ class SessionConfig(BaseModel):
 
 
 class HookServerConfig(BaseModel):
+    """Hook Server 配置；端口不属于 YAML，由 CLI 启动参数提供。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
-    port: int = 18765
     host: str = "localhost"
 
 
@@ -193,6 +196,7 @@ class WatchdogConfig(BaseModel):
 
 # 用户可见品牌名默认值：侧边栏标识、浏览器标签标题、Swagger 标题与 CLI help 头共用。
 DEFAULT_BRAND_NAME = "Workflow Controller"
+DEFAULT_HOOK_SERVER_PORT = 18765
 
 
 class AppConfig(BaseModel):

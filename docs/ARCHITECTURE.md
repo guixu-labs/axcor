@@ -138,6 +138,8 @@ CREATING → IDLE → RUNNING            COMPLETED/STOPPED/FAILED
 
 - **SessionAPI.start(project_dir)**：`generate_hook_config` → 读 `workspace.json` 判断是否同项目 → 写 `workspace.json`（记录 project_dir；事件与列表恒守护进程库，换项目不清空）→ 优先用该目录的 `workflow-controller.yaml`（无则全局 config）构造 worker `SessionConfig`（`loop`/`runtime`/`system_prompt`/`starting_prompt` 等取自 yaml）→ `start_session_with_config`
 - **Claude CLI hook 前置**：默认 runtime 为 `claude_cli` 时，controller 启动 Hook Server 后即按当前 endpoint 刷新项目 `.claude/settings.json`；激活任意 `claude_cli` session 前再次刷新目标 cwd 的 hooks，并要求 Hook Server 已在役。刷新失败或 Hook Server 缺失时 activation fail-fast，防止旧 session 继续访问已漂移的历史端口。
+- **CLI driver hook 归属**：Orchestrator 经 driver factory 创建具体 runtime driver 并调用其 `refresh_hooks`；runtime 分派只存在于 factory，CLI driver 不比较 runtime 字符串。
+- **Hook Server 实际端口**：controller 实例维护 `effective_hook_port`，端口只来自启动参数 CLI `--hook-port`，未指定时使用默认 `18765`；YAML 不再支持 `hook_server.port`。Hook Server 绑定、Claude `.claude/settings.json` 与 Codex `WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 都以 `effective_hook_port` 为唯一事实源。完整设计见 [hook-server-port.md](specs/hook-server-port.md)。
 - **Hook 启动事务回滚**：Hook Server 绑定成功后的任何启动步骤失败（如 Claude hooks 写入失败）都必须先停止已绑定的 Hook Server，再卸载插件并停事件总线；不能只丢弃对象引用，留下仍监听端口的 TCPSite。
 - **SessionAPI.delete()**：统一执行 `stop_session → pool.remove → bus.emit(session_delete) → event_router.delete_session`；Web DELETE 路由只做参数校验和 HTTP 错误映射，不另行实现删除链路
 - **SessionAPI.inject_prompt()**：`pool.inject_prompt()` + `event_store.store(LOG_MANUAL)`
@@ -443,7 +445,7 @@ Driver (ABC)
 
 > **自动回复转人工**：自动模式的会话在轮次结束后遇到尚未回答的问题时，循环引擎临时将该会话的有效回复模式切为手动。收到回复后，下一轮以自动模式处理回复。暂停或中断等待时解除临时切换。会话快照向 Web 提供当前有效模式和等待标记，已保存的模式配置保持原值。
 
-> **Hook Server 启动**：启动时从命令运行目录下的 `workflow-controller-config.yaml` 读取 `hook_server`。设置页保存该文件，下次启动按新的配置监听。`hook_server.enabled` 默认为 `true`，监听地址默认为 `localhost:18765`。启用后首次绑定失败即终止 Workflow Controller 启动。`boot()` 在共享 API 边界把 Hook Server 绑定错误转换为 `BootError`，Web 和 headless 各自呈现启动失败；CLI `main()` 不感知 Hook Server 的底层异常。Web 和 headless 均以退出码 3 退出并报告监听地址和系统错误，headless 在标准输出写入 JSON 错误事件。显式设为 `false` 时可跳过监听，启动时也会跳过插件装载。Claude CLI 的 Stop 审核和工具提问经 HTTP 回调进入控制器。Claude SDK 和 OpenCode 的 reviewer 回调走进程内通道。
+> **Hook Server 启动**：启动时从命令运行目录下的 `workflow-controller-config.yaml` 读取 `hook_server` 的启用与监听地址配置；端口由 CLI `--hook-port` 指定，未指定时使用默认 `18765`，YAML 不再支持端口配置。`hook_server.enabled` 默认为 `true`，监听地址默认为 `localhost`。启用后首次绑定失败即终止 Workflow Controller 启动。`boot()` 在共享 API 边界把 Hook Server 绑定错误转换为 `BootError`，Web 和 headless 各自呈现启动失败；CLI `main()` 不感知 Hook Server 的底层异常。Web 和 headless 均以退出码 3 退出并报告监听地址和系统错误，headless 在标准输出写入 JSON 错误事件。显式设为 `false` 时可跳过监听，启动时也会跳过插件装载。Claude CLI 的 Stop 审核和工具提问经 HTTP 回调进入控制器。Claude SDK 和 OpenCode 的 reviewer 回调走进程内通道。
 
 > **overlay 注册表外溢剥离**（阶段 A）：opencode-only 的 overlay 状态（per-session + per-project 的 subagent hints + 全局 instructions）原活在 `orchestrator` 的 4 个 dict + 14 个方法里（SDK/CLI 永远空跑）。现抽到 `core/overlay_registry.py` 的 `OverlayRegistry`：orchestrator 持 `self._overlays`，公开方法降为一行转发、新增 `overlays` 属性供直接访问；`start_session_with_config` / `start_session_with_resume` 经 `transfer_project_overlays` / `transfer_session_overlays` 注入。opencode driver 的 session 标题更新（原 `orchestrator._update_opencode_title` 直接 `sqlite3.connect` opencode DB）下沉为 driver-agnostic 的 `Driver.update_session_title(sdk_id, name)`——orchestrator 只轮询 `session.sdk_session_id` 后委托 driver（SDK/CLI noop），不再触碰 opencode 的 sqlite3。opencode DB 路径解析（`_resolve_opencode_db_path`）随之归入 `driver/opencode.py`，`session_api` 的只读/导入 helper 改从 driver 包 import。
 
@@ -517,7 +519,7 @@ from workflow_controller.plugin.sdk import Plugin, PluginTabDef, StopHookResult,
 
 | 能力 | 方法 | 服务 |
 |---|---|---|
-| aiohttp 路由（CC hooks） | `register_hook_routes(hook_server, routes)` | :18765 |
+| aiohttp 路由（CC hooks） | `register_hook_routes(hook_server, routes)` | :默认 18765 |
 | FastAPI 路由（浏览器） | `get_web_router()` | :18600 |
 | Stop-hook 拦截 | `on_stop_hook(session_id, session) → StopHookResult` | — |
 | Iteration-boundary gate | async `on_iteration_boundary(session_id, session, iter) → IterationGateResult` | loop 边界 |
@@ -697,7 +699,7 @@ Claude Code subprocess (cwd=project_dir)
   │  reads .claude/settings.json
   │  hooks fire on: PreToolUse, PostToolUse, Stop, Notification, SessionStart/End, SubagentStart/Stop
   ▼
-HTTP POST → HookServer (localhost:18765)
+HTTP POST → HookServer (localhost:<effective_hook_port>)
   │  hook handlers:
   │    PreToolUse → plugin interceptors (10) → reviewer (0) decides allow/deny
   │    Stop      → plugin interceptors (10, e.g. breather handoff) → orchestrator pre-stop (5, staged) → reviewer (0, manual/LLM)

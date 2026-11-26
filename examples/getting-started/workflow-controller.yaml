@@ -2,7 +2,6 @@ agents_path: ''
 hook_server:
   enabled: true
   host: 127.0.0.1
-  port: 18765
 project_dir: ./sample-project
 reviewer:
   enabled: true

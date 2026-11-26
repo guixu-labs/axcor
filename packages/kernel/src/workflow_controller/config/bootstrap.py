@@ -68,7 +68,6 @@ class ConfigFields:
 
     # ── Hook server ───────────────────────────────────────────────────
     hook_server_enabled: bool = True
-    hook_server_port: int = 18765
 
     # ── Starting prompt ───────────────────────────────────────────────
     starting_prompt: str = DEFAULT_STARTING_PROMPT
@@ -106,7 +105,6 @@ def build_yaml_dict(fields: ConfigFields) -> dict[str, Any]:
 
     out["hook_server"] = {
         "enabled": fields.hook_server_enabled,
-        "port": fields.hook_server_port,
     }
 
     return out

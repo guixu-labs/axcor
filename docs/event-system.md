@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 `src/workflow_controller/hooks/server.py`
 
-8 个 hook 路由（port 18765），handler → event 映射：
+8 个 hook 路由（默认 port 18765，可用 `--hook-port` 指定），handler → event 映射：
 
 | HTTP 路由 | 发 event_type | 备注 |
 |-----------|---------------|------|

@@ -31,6 +31,7 @@ def test_cmd_run_reports_hook_startup_failure_as_json(tmp_path: Path, monkeypatc
     from workflow_controller.hooks.server import HookServer
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORKFLOW_CONTROLLER_HOOK_PORT", "18765")
     start = AsyncMock(side_effect=OSError("Address already in use"))
     monkeypatch.setattr(HookServer, "start", start)
 

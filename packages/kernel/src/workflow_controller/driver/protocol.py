@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
     from workflow_controller.driver.hooks import DriverHooks
     from workflow_controller.session.events import Event
@@ -88,3 +89,13 @@ class Driver(ABC):
         access). Returns False if no row was renamed (no DB / not written yet).
         """
         return False
+
+    def refresh_hooks(  # noqa: B027
+        self,
+        project_dir: Path,
+        *,
+        hook_server_active: bool,
+        hook_server_host: str,
+        hook_server_port: int,
+    ) -> None:
+        """Prepare runtime-local hook configuration before activation."""

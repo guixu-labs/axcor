@@ -52,9 +52,13 @@ def banner(msg: str) -> None:
 def _build_orchestrator(args: argparse.Namespace) -> Orchestrator:
     """装配 Orchestrator：手动挂 HookServer 并安装 Breather 插件（Step 1）。"""
     config = AppConfig(
-        hook_server=HookServerConfig(port=args.port, host="localhost"),
+        hook_server=HookServerConfig(host="localhost"),
     )
-    orch = Orchestrator(config, default_project_dir=Path("/tmp/breather-demo.db"))
+    orch = Orchestrator(
+        config,
+        default_project_dir=Path("/tmp/breather-demo.db"),
+        hook_server_port_override=args.port,
+    )
 
     # 手动启动 HookServer（跳过 reviewer，demo 不需要实际模型）
     from workflow_controller.hooks.adapter import HookPayloadAdapter

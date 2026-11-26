@@ -46,7 +46,7 @@ async def main() -> None:
     program.write_text("format: fake@1\n", encoding="utf-8")
     config = AppConfig(
         project_dir=str(workdir),
-        hook_server=HookServerConfig(enabled=True, port=0),
+        hook_server=HookServerConfig(enabled=True),
         reviewer=ReviewerConfig(enabled=False),
     )
     orchestrator, api = await boot(config, workdir / "workflow-controller-config.yaml")
@@ -92,6 +92,7 @@ examples/  conf/  docs/
 - [docs/event-system.md](docs/event-system.md) — 事件系统
 - [docs/watchdog.md](docs/watchdog.md) — 故障检测
 - [docs/develop-workflows-guide.md](docs/develop-workflows-guide.md) — 工作流开发指南
+- [docs/specs/hook-server-port.md](docs/specs/hook-server-port.md) — Hook Server 端口 CLI 设计
 - [docs/release-process.md](docs/release-process.md) — 发布流程与版本策略
 - [docs/opencode-file-provenance.md](docs/opencode-file-provenance.md) — OpenCode 文件归因指南
 

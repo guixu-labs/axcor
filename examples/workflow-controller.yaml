@@ -40,5 +40,4 @@ reviewer:
 
 hook_server:
   enabled: true
-  port: 18765
   host: localhost

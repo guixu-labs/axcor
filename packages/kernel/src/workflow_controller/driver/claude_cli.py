@@ -40,6 +40,8 @@ from workflow_controller.driver.cli_base import (
     kill_proc_group,
     spawn_failure_events,
 )
+from workflow_controller.hooks.hook_config import HookConfigGenerator
+from workflow_controller.hooks.server import HookServerStartupError
 from workflow_controller.session.usage import context_input_tokens
 
 if TYPE_CHECKING:
@@ -86,6 +88,22 @@ class ClaudeCLIDriver(CLIDriverBase):
         self._fork_session: bool = fork_session
         self._claude_bin: str = claude_bin
         self._command_prefix: list[str] = command_prefix or []
+
+    def refresh_hooks(
+        self,
+        project_dir: Path,
+        *,
+        hook_server_active: bool,
+        hook_server_host: str,
+        hook_server_port: int,
+    ) -> None:
+        """Refresh Claude CLI HTTP hooks and require a live Hook Server."""
+        if not hook_server_active:
+            raise HookServerStartupError("Claude CLI session requires an active Hook Server")
+        HookConfigGenerator(
+            port=hook_server_port,
+            host=hook_server_host,
+        ).write_settings(project_dir.resolve())
 
     @property
     def claude_bin(self) -> str:

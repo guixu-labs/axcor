@@ -197,14 +197,14 @@ def _apply_web_fields(cfg: AppConfig, partial: dict[str, Any]) -> None:
 
 
 def _apply_hook_server(cfg: AppConfig, partial: dict[str, Any]) -> None:
-    """应用 hook_server 段（enabled/port/host）。"""
+    """应用 hook_server 段（enabled/host）；端口只归 CLI。"""
     hs = partial.get("hook_server")
     if not isinstance(hs, dict):
         return
+    if "port" in hs:
+        raise ValueError("hook_server.port 不再支持配置；请使用 --hook-port")
     if isinstance(hs.get("enabled"), bool):
         cfg.hook_server.enabled = hs["enabled"]
-    if "port" in hs:
-        cfg.hook_server.port = hs["port"]
     if "host" in hs:
         cfg.hook_server.host = hs["host"]
 
@@ -366,7 +366,6 @@ class ConfigAPI:
             "agents_path": cfg.agents_path,
             "hook_server": {
                 "enabled": cfg.hook_server.enabled,
-                "port": cfg.hook_server.port,
                 "host": cfg.hook_server.host,
             },
             "reviewer": {

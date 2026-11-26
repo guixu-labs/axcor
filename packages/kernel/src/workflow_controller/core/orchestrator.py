@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
-from workflow_controller.config.settings import AppConfig, SessionConfig, SessionReviewerConfig
+from workflow_controller.config.settings import (
+    DEFAULT_HOOK_SERVER_PORT,
+    AppConfig,
+    SessionConfig,
+    SessionReviewerConfig,
+)
 from workflow_controller.core._subagent import summarize_subagent_transcript
 from workflow_controller.core.auth_rotator import AuthRotator, build_default_rotator
 from workflow_controller.core.auth_rotator.detector import LimitDetector
@@ -137,13 +142,16 @@ class Orchestrator:
     _reviewer_mode: str
     _stop_block_counts: dict[str, int]
     _stop_block_limit: int
+    _hook_server_port_override: int | None
 
     def __init__(
         self,
         config: AppConfig,
         default_project_dir: Path | None = None,
+        hook_server_port_override: int | None = None,
     ) -> None:
         self.config = config
+        self._hook_server_port_override = hook_server_port_override
         _project_dir = (default_project_dir or Path(config.project_dir)).resolve()
         # 守护进程库锚点：一切 run/session 事件与账面（event_router 单库、
         # run_store 账面与 run 数据根）都锚这里，不随 config 漂移出两套真相；
@@ -173,6 +181,18 @@ class Orchestrator:
     def hook_server_active(self) -> bool:
         """hook server 是否在役（api 层健康快照等只读消费方用）。"""
         return self._hook_server is not None
+
+    @property
+    def effective_hook_server_port(self) -> int:
+        """运行期唯一 Hook Server 端口（CLI 或默认值）。"""
+        if self._hook_server_port_override is None:
+            return DEFAULT_HOOK_SERVER_PORT
+        return self._hook_server_port_override
+
+    @property
+    def hook_server_base_url(self) -> str:
+        """运行期唯一 Hook Server 基础 URL。"""
+        return f"http://{self.config.hook_server.host}:{self.effective_hook_server_port}"
 
     @property
     def default_project_dir(self) -> Path:
@@ -329,10 +349,7 @@ class Orchestrator:
             self._plugin_registry.load(self, self._hook_server)
             try:
                 await self._hook_server.start()
-                self._refresh_claude_cli_hooks(
-                    self.config.runtime,
-                    Path(self.config.project_dir),
-                )
+                self._refresh_runtime_hooks(self.config.runtime, Path(self.config.project_dir))
             except Exception as exc:
                 hook_server = self._hook_server
                 host, port = hook_server.host, hook_server.port
@@ -657,9 +674,7 @@ class Orchestrator:
             session_id=mig_session_id,
             on_pre_tool_use=self._handle_driver_pre_tool_use,
             on_post_tool_use=self._handle_driver_post_tool_use,
-            file_change_hook_url=(
-                f"http://{self.config.hook_server.host}:{self.config.hook_server.port}"
-            ),
+            file_change_hook_url=self.hook_server_base_url,
             file_changes_enabled=lambda: self.file_changes.has_subscribers,
             on_stop=lambda sid, data: self._decide_stop(
                 sid,
@@ -1082,20 +1097,21 @@ class Orchestrator:
     def generate_hook_config(self, project_dir: Path | None = None) -> None:
         """写入各 runtime 需要的本地 hook 配置。"""
         generator = HookConfigGenerator(
-            port=self.config.hook_server.port,
+            port=self.effective_hook_server_port,
             host=self.config.hook_server.host,
         )
         generator.write_settings((project_dir or Path.cwd()).resolve())
 
-    def _refresh_claude_cli_hooks(self, runtime: str | None, project_dir: Path) -> None:
-        """Refresh Claude CLI HTTP hooks and reject activation without a live server."""
-        from workflow_controller.driver.factory import resolve_runtime
+    def _refresh_runtime_hooks(self, runtime: str | None, project_dir: Path) -> None:
+        """让具体 driver 准备自己的本地 hook 配置。"""
+        from workflow_controller.driver.factory import create_driver
 
-        if resolve_runtime(runtime) != "claude_cli":
-            return
-        if not self.hook_server_active:
-            raise HookServerStartupError("Claude CLI session requires an active Hook Server")
-        self.generate_hook_config(project_dir)
+        create_driver(runtime or self.config.runtime).refresh_hooks(
+            project_dir,
+            hook_server_active=self.hook_server_active,
+            hook_server_host=self.config.hook_server.host,
+            hook_server_port=self.effective_hook_server_port,
+        )
 
     async def _restart_hook_server(self) -> None:
         """重载后重启 hook server：端口占用最多重试 3 次（间隔 0.3s）。"""
@@ -1121,7 +1137,7 @@ class Orchestrator:
     def _build_hook_server(self) -> HookServer:
         """按配置装配 HookServer（启动与 reload 重建共用同一组回调）。"""
         return HookServer(
-            port=self.config.hook_server.port,
+            port=self.effective_hook_server_port,
             host=self.config.hook_server.host,
             on_event=HookPayloadAdapter(self.bus),
             on_stop_request=self._handle_stop_request,
@@ -1193,7 +1209,7 @@ class Orchestrator:
         # global provider/reviewer changes cannot affect this session later.
         await self._ensure_session_snapshots(session)
         await self._validate_session_provider_bindings(session)
-        self._refresh_claude_cli_hooks(session.config.runtime, Path(session.config.cwd))
+        self._refresh_runtime_hooks(session.config.runtime, Path(session.config.cwd))
         # 状态迁移事件接线：钩子随激活安装，session 终身有效（去激活后仍可发射）
         session.set_state_change_hook(self._schedule_session_state_event)
         session.set_outcome_emitter(self._emit_session_outcome_event)

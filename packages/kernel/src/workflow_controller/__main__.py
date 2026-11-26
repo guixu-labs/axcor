@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -70,7 +71,7 @@ def cmd_provenance_serve(project: Path, ignore: tuple[str, ...], max_file_bytes:
 )
 @click.pass_context
 def cmd_codex_hook(ctx: click.Context, event: str) -> None:
-    """转发 Codex command hook。"""
+    """转发 Codex 原生 command hook（内部命令，不接受端口参数）。"""
     from workflow_controller.driver.hooks import run_codex_hook
 
     ctx.exit(run_codex_hook(event))
@@ -134,7 +135,12 @@ def cmd_provenance_export_audit_evidence(
     default=None,
     help="Dir with settings.conf + auth_state.json (default: ~/.config/workflow-controller/)",
 )
-@click.option("--port", "-p", default=18765, type=int)
+@click.option(
+    "--hook-port",
+    type=click.IntRange(min=1, max=65535),
+    default=18765,
+    help="Hook server port (default: 18765)",
+)
 @click.option("--headless", is_flag=True, help="(default) JSON lines to stdout (CI/scripts)")
 @click.option("--no-reviewer", is_flag=True)
 @click.option(
@@ -145,7 +151,7 @@ def cmd_provenance_export_audit_evidence(
 def cmd_run(
     config: str,
     settings_dir: str | None,
-    port: int,
+    hook_port: int,
     headless: bool,
     no_reviewer: bool,
     log_level: str | None,
@@ -154,7 +160,7 @@ def cmd_run(
     from workflow_controller.logging_config import configure_logging
 
     app_cfg = _load_app_config(config)
-    app_cfg.hook_server.port = port
+    os.environ["WORKFLOW_CONTROLLER_HOOK_PORT"] = str(hook_port)
     if no_reviewer:
         app_cfg.reviewer.enabled = False
     if log_level is not None:
@@ -181,6 +187,12 @@ def cmd_run(
 @cli.command("web")
 @click.option("--port", default=18600, type=int, help="Web UI port")
 @click.option("--host", default="127.0.0.1", help="Bind address")
+@click.option(
+    "--hook-port",
+    type=click.IntRange(min=1, max=65535),
+    default=None,
+    help="Hook server port (default: 18765)",
+)
 @click.option("--no-open", is_flag=True, help="Don't open browser")
 @click.option("--dev", is_flag=True, help="Dev mode: Vite HMR frontend + uvicorn reload")
 @click.option(
@@ -206,6 +218,7 @@ def cmd_web(
     ctx: click.Context,
     port: int,
     host: str,
+    hook_port: int | None,
     no_open: bool,
     dev: bool,
     insight: str | None,
@@ -214,6 +227,11 @@ def cmd_web(
     log_level: str | None,
 ) -> None:
     """Start Web UI — Vue 3 SPA + SSE real-time stream."""
+    if hook_port is None:
+        os.environ.pop("WORKFLOW_CONTROLLER_HOOK_PORT", None)
+    else:
+        os.environ["WORKFLOW_CONTROLLER_HOOK_PORT"] = str(hook_port)
+
     # Web/Insight 装配住完整发行包的 web 模块，函数内懒装配保持内核导入链干净
     try:
         from workflow_controller.web.cli import run_web_command

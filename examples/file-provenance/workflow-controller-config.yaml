@@ -3,7 +3,6 @@ project_dir: ./sample-project
 hook_server:
   enabled: true
   host: 127.0.0.1
-  port: 18765
 
 reviewer:
   enabled: false

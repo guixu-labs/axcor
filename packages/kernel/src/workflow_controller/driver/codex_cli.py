@@ -42,6 +42,8 @@ from workflow_controller.driver.codex_catalog import (
     validate_provider_catalog,
 )
 from workflow_controller.driver.codex_store import SubagentProgressMonitor
+from workflow_controller.driver.hooks import CodexHookConfigWriter
+from workflow_controller.hooks.server import HookServerStartupError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -339,6 +341,19 @@ class CodexCLIDriver(CLIDriverBase):
         self._fork_session: bool = fork_session
         self._codex_bin: str = codex_bin
         self._command_prefix: list[str] = command_prefix or []
+
+    def refresh_hooks(
+        self,
+        project_dir: Path,
+        *,
+        hook_server_active: bool,
+        hook_server_host: str,
+        hook_server_port: int,
+    ) -> None:
+        """Refresh Codex managed hooks and require a live Hook Server."""
+        if not hook_server_active:
+            raise HookServerStartupError("Codex CLI session requires an active Hook Server")
+        CodexHookConfigWriter().prepare(project_dir)
 
     @property
     def codex_bin(self) -> str:

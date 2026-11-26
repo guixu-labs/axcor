@@ -53,4 +53,3 @@ starting_prompt: |
 hook_server:
   enabled: true
   host: 127.0.0.1
-  port: 18765

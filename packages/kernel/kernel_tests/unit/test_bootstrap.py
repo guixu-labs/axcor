@@ -48,7 +48,7 @@ class TestBuildYamlDict:
             "vs llm distinction no longer exists"
         )
         assert data["reviewer"]["enabled"] is True
-        assert data["hook_server"]["port"] == 18765
+        assert "port" not in data["hook_server"]
 
     @staticmethod
     def test_skills_path_omitted_when_blank() -> None:
@@ -70,7 +70,7 @@ class TestWriteYaml:
         cfg = AppConfig.from_yaml(path)
         assert cfg.reviewer.enabled is True
         assert not hasattr(cfg.reviewer, "mode")
-        assert cfg.hook_server.port == 18765
+        assert not hasattr(cfg.hook_server, "port")
 
     @staticmethod
     def test_chinese_task_goal_preserved(tmp_path: Path) -> None:

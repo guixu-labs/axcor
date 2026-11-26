@@ -164,13 +164,17 @@ async def _mount_demo_app(project_dir: Path, tmp: Path, source_db: Path, live: b
     from workflow_controller.core.orchestrator import Orchestrator
 
     # AppConfig：live 模式开 hook_server（opencode driver 的 hook 回调通道）。
-    hook_cfg = HookServerConfig(enabled=live, port=18790 if live else 18765)
+    hook_cfg = HookServerConfig(enabled=live)
     cfg = AppConfig(
         project_dir=str(project_dir),
         hook_server=hook_cfg,
         reviewer=ReviewerConfig(enabled=False),
     )
-    orch = Orchestrator(cfg, default_project_dir=tmp / "test.db")
+    orch = Orchestrator(
+        cfg,
+        default_project_dir=tmp / "test.db",
+        hook_server_port_override=18790 if live else None,
+    )
     await orch.start()
     if not live:
         setattr(orch, "_activate_session", AsyncMock())  # 不 spawn driver

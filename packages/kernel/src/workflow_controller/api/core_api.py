@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -116,11 +117,23 @@ async def boot(
 
     set_config_runtime(config.runtime)
 
+    # CLI --hook-port is runtime-only; Hook Server port is not a YAML field.
+    hook_port_raw = os.environ.get("WORKFLOW_CONTROLLER_HOOK_PORT")
+    hook_port_override: int | None
+    try:
+        hook_port_override = int(hook_port_raw) if hook_port_raw else None
+    except ValueError as exc:
+        raise BootError("WORKFLOW_CONTROLLER_HOOK_PORT must be an integer") from exc
+
     # 存储目录解耦：sessions.json / 默认 events.db 绑定到启动期 cwd，不再随
     # 可变的 config.project_dir 漂移。切项目后 yaml 指针变了，但运行期存储位置
     # 不动，重启也从同一固定位置加载，根治「重启后 session 闪现/丢失」。
     # 测试与 demo 可显式传 default_project_dir 覆盖，不受影响。
-    orch = _Orchestrator(config, default_project_dir=Path.cwd())
+    orch = _Orchestrator(
+        config,
+        default_project_dir=Path.cwd(),
+        hook_server_port_override=hook_port_override,
+    )
     orch.config_path = config_path  # type: ignore[attr-defined]
     cfg_dir = settings_dir or default_config_dir()
     orch.cfg_dir = cfg_dir  # type: ignore[attr-defined]  # recent_dirs.json 等主机本地状态存此（与 auth_state.json 同目录）
