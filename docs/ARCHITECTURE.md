@@ -737,7 +737,8 @@ AuthRotator
 │           跳过验证缓存；现有 /auth/test 仍检测当前 active provider。重测
 │           返回 success 时，EXHAUSTED 的全局配额状态恢复为 ACTIVE/UNUSED，
 │           并清理 exhausted_at、reset_at、scope 与该 provider 的恢复任务；
-│           auth_error 造成的能力 INVALID 不因此连坐恢复。
+│           check_auth 成功还会将 auth_error 造成的全局 INVALID 恢复为
+│           ACTIVE，避免轻量健康检查无法解除认证错误轮换状态。
 ├── 轮转：rotate_to_first_available / rotate_to_next_key / rotate_key /
 │         schedule_pending_resets（按 provider 调度 reset；到期把该
 │         provider 从 EXHAUSTED 恢复为 ACTIVE/UNUSED）

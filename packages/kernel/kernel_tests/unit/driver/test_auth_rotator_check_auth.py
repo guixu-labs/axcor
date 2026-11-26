@@ -22,11 +22,13 @@ third-party endpoint).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from workflow_controller.core.auth_rotator import AuthRotator
+from workflow_controller.core.auth_rotator.persistence import KeyStatus
 from workflow_controller.driver.anthropic_http import AnthropicHttpClient, HttpResult
 
 if TYPE_CHECKING:
@@ -80,6 +82,35 @@ async def test_check_auth_invalid_key_reports_error(
     ok, err = await rotator.check_auth()
     assert ok is False
     assert "401" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_check_auth_success_restores_auth_error_invalid(
+    rotator: AuthRotator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """check_auth 成功后清除 auth_error 造成的全局 INVALID 状态。"""
+    (rotator._config_dir / "settings.conf").write_text("api_keys:\n  - sk-test\n", encoding="utf-8")
+    rotator.sync_providers_from_config()
+    provider = rotator.get_provider(0)
+    provider.status = KeyStatus.INVALID
+    provider.exhausted_at = datetime.now(tz=UTC)
+    provider.reset_at = datetime.now(tz=UTC) + timedelta(hours=1)
+    provider.scope = "auth_error"
+
+    async def fake_request(self, prompt, *, env=None, **kwargs):
+        return HttpResult(text="ok", is_error=False, error="")
+
+    monkeypatch.setattr(AnthropicHttpClient, "request", fake_request)
+
+    ok, err = await rotator.check_auth()
+
+    assert ok is True
+    assert err is None
+    assert provider.status is KeyStatus.ACTIVE
+    assert provider.exhausted_at is None
+    assert provider.reset_at is None
+    assert provider.scope is None
 
 
 @pytest.mark.asyncio

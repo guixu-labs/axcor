@@ -1604,8 +1604,19 @@ class AuthRotator:
             self._last_oauth_ok = True
 
     def _reactivate_exhausted_active(self) -> None:
-        """Reset the active provider to ACTIVE after a successful key check."""
+        """Restore the active provider after a successful key check."""
         self._restore_exhausted_provider(self._active_index)
+        if not (0 <= self._active_index < len(self._providers)):
+            return
+        provider = self._providers[self._active_index]
+        if provider.status != KeyStatus.INVALID or provider.scope != "auth_error":
+            return
+        self._cancel_provider_reset(self._active_index)
+        provider.status = KeyStatus.ACTIVE
+        provider.exhausted_at = None
+        provider.reset_at = None
+        provider.scope = None
+        self._persist()
 
     async def _maybe_probe_kind(
         self,
