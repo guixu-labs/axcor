@@ -418,7 +418,6 @@ class Session:
         self.state = SessionState.RUNNING
         self.loop_status = "yes"
         self.stop_reason = None
-        self.current_iteration = 1
         self.result = None
         # 续跑按新执行段计时，旧执行段耗时不挤占本段预算。
         self.active_seconds = 0.0

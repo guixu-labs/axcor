@@ -777,24 +777,6 @@ class TestInjectPrompt:
         assert "原始worker任务" in result
 
     @staticmethod
-    def test_resume_iteration_counts_up_from_1():
-        """resume 后 current_iteration=1，下一轮 iteration=2。"""
-        cfg = SessionConfig(name="test-worker", initial_prompt="测试", cwd="/tmp")
-        session = Session(session_id="resume-test", config=cfg)
-        session.sdk_session_id = "resume-test-native"
-        session.current_iteration = 5
-        session.state = SessionState.IDLE
-
-        # Pause + Resume
-        session.loop_status = "no"
-        session.stop_reason = "user_pause"
-        asyncio.run(session.resume())
-
-        assert session.current_iteration == 1
-        # loop 里 iteration = current_iteration + 1 = 2
-        # 满足 _resume_next and iteration > 1 → 进入 resume 分支
-
-    @staticmethod
     def test_resume_without_input_uses_default_prompt():
         """resume 无文本框输入 → "请继续你之前的工作。"。"""
         cfg = SessionConfig(name="test-worker", initial_prompt="测试", cwd="/tmp")

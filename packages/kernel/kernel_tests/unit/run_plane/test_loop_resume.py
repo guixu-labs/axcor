@@ -26,11 +26,14 @@ import asyncio
 import contextlib
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
+from workflow_controller.config.settings import SessionConfig
 from workflow_controller.core.loop import SingleLoopEngine
 from workflow_controller.session.events import Event, EventType
+from workflow_controller.session.manager import SessionPool
 
 
 class FakeBus:
@@ -153,6 +156,40 @@ async def _run_cancelled(engine: SingleLoopEngine, session: FakeSession) -> None
     """跑一轮会取消的迭代：引擎主循环捕获 CancelledError，此处同款。"""
     with contextlib.suppress(asyncio.CancelledError):
         await getattr(engine, "_run_iteration")(session)
+
+
+@pytest.mark.parametrize(
+    ("paused_iteration", "expected_iteration", "expected_prompt"),
+    [(0, 1, "创建 output/agent-2.txt"), (3, 4, "请继续你之前的工作。")],
+)
+async def test_pause_and_resume_preserve_query_number(
+    monkeypatch, paused_iteration, expected_iteration, expected_prompt
+) -> None:
+    """通过真实暂停恢复入口验证持久化轮次和下一条查询事件。"""
+    pool = SessionPool()
+    store_session = AsyncMock()
+    pool.set_event_router(SimpleNamespace(store_session=store_session))
+    session = await pool.create(
+        SessionConfig(name="worker", role="worker", initial_prompt="创建 output/agent-2.txt")
+    )
+    session.current_iteration = paused_iteration
+    monkeypatch.setattr(session, "_recover_sdk_session_id", lambda: None)
+    prompts: list[str] = []
+    monkeypatch.setattr(session, "query", FakeSession(prompts, [[]]).query)
+
+    await pool.pause(session.id)
+    await pool.resume(session.id)
+
+    assert session.current_iteration == paused_iteration
+    assert store_session.await_args.kwargs["current_iteration"] == paused_iteration
+
+    engine = _engine()
+    await getattr(engine, "_run_iteration")(session)
+    query_event = next(
+        event for event in engine.bus.events if event.event_type == EventType.LOG_QUERY
+    )
+    assert query_event.iteration == expected_iteration
+    assert prompts == [expected_prompt]
 
 
 async def test_resume_after_zero_event_cancel_reprompts_initial(monkeypatch) -> None:
