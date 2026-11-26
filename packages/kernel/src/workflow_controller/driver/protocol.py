@@ -82,7 +82,7 @@ class Driver(ABC):
         """
         ...
 
-    def update_session_title(self, sdk_session_id: str, name: str) -> bool:
+    def update_session_title(self, native_session_id: str, name: str) -> bool:
         """Driver-agnostic title seam: opencode overrides (sqlite UPDATE), SDK/CLI
         inherit this noop. Orchestrator delegates here (no direct runtime-DB
         access). Returns False if no row was renamed (no DB / not written yet).

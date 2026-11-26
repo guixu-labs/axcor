@@ -358,7 +358,7 @@ def test_resolve_roster_source_runtime_matrix(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setenv("OPENCODE_DB_PATH", str(tmp_path / "oc.db"))
     (tmp_path / "oc.db").write_bytes(b"")
     row = {
-        "sdk_session_id": "ses_n",
+        "native_session_id": "ses_n",
         "config_json": json.dumps(
             {
                 "runtime": None,
@@ -513,7 +513,7 @@ def test_claude_roster_uses_session_environment(tmp_path: Path, monkeypatch) -> 
     path.parent.mkdir(parents=True)
     path.write_text("{}\n")
     row = {
-        "sdk_session_id": "ses_3",
+        "native_session_id": "ses_3",
         "config_json": json.dumps(
             {
                 "runtime": "claude_cli",
@@ -569,7 +569,7 @@ def test_graph_roster_uses_opencode_db_from_inherited_env(tmp_path: Path, monkey
     monkeypatch.setenv("OPENCODE_DB", str(actual))
 
     row = {
-        "sdk_session_id": "ses_target",
+        "native_session_id": "ses_target",
         "config_json": json.dumps(
             {
                 "runtime": "opencode",

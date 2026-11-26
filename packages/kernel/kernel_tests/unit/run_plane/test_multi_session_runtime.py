@@ -669,7 +669,7 @@ async def test_auth_error_switch_clears_native_session_before_next_driver(
             initial_prompt="test",
         )
     )
-    session.sdk_session_id = "old-opencode-session"
+    session.native_session_id = "old-opencode-session"
 
     handled = await getattr(orchestrator, "_handle_session_limit")(
         Event.create(
@@ -682,7 +682,7 @@ async def test_auth_error_switch_clears_native_session_before_next_driver(
 
     assert handled is True
     assert session.config.provider_index == 1
-    assert session.sdk_session_id is None
+    assert session.native_session_id is None
     loop.request_auth_switch_now.assert_called_once()
 
 

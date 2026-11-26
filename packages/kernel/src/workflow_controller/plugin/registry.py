@@ -60,7 +60,7 @@ def _event_query_factories(orchestrator: Any) -> dict[str, Any]:
             "role": session.role,
             "state": getattr(session.state, "value", str(session.state)),
             "result": session.result,
-            "sdk_session_id": session.sdk_session_id,
+            "native_session_id": session.native_session_id,
             "created_at": session.created_at.isoformat(),
             "last_activity": session.last_activity.isoformat(),
             "current_iteration": session.current_iteration,

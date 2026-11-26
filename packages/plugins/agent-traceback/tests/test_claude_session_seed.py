@@ -133,11 +133,11 @@ def test_detect_replay_runtime_prefers_source_evidence(tmp_path):
         default_runtime="claude_sdk",
         source_config_dir=str(config),
     )
-    assert detect_replay_runtime(sdk_session_id="origin-uuid", **base) == "claude_cli"
-    assert detect_replay_runtime(sdk_session_id="ses_abc", **base) == "opencode"
+    assert detect_replay_runtime(native_session_id="origin-uuid", **base) == "claude_cli"
+    assert detect_replay_runtime(native_session_id="ses_abc", **base) == "opencode"
     assert (
         detect_replay_runtime(
-            sdk_session_id="ses_abc",
+            native_session_id="ses_abc",
             **{**base, "configured_runtime": "claude_cli"},
         )
         == "claude_cli"
@@ -152,14 +152,14 @@ def test_detect_replay_runtime_falls_back_to_default_when_no_transcript(tmp_path
     base = dict(cwd=str(cwd), configured_runtime=None, source_config_dir=str(config))
     assert (
         detect_replay_runtime(
-            sdk_session_id="origin-uuid",
+            native_session_id="origin-uuid",
             **{**base, "default_runtime": "claude_sdk"},
         )
         == "claude_sdk"
     )
     assert (
         detect_replay_runtime(
-            sdk_session_id="origin-uuid",
+            native_session_id="origin-uuid",
             **{**base, "default_runtime": "claude_cli"},
         )
         == "claude_cli"

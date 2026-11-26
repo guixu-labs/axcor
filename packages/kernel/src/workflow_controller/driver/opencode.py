@@ -249,13 +249,13 @@ class OpenCodeDriver(CLIDriverBase):
                 with contextlib.suppress(BaseException):
                     await stderr_task
 
-    def update_session_title(self, sdk_session_id: str, name: str) -> bool:
+    def update_session_title(self, native_session_id: str, name: str) -> bool:
         """Overrides ``Driver.update_session_title``: UPDATEs opencode's sqlite DB
         directly (orchestrator must not ``sqlite3.connect`` here). Returns False
         when the DB / sdk_id is missing or the row isn't written yet — rowcount
         folds the old existence SELECT into the UPDATE. Never raises.
         """
-        if not sdk_session_id or not name:
+        if not native_session_id or not name:
             return False
         db_path = _resolve_opencode_db_path()
         if not db_path:
@@ -268,14 +268,14 @@ class OpenCodeDriver(CLIDriverBase):
             with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
                 cur = conn.execute(
                     "UPDATE session SET title = ? WHERE id = ?",
-                    (name, sdk_session_id),
+                    (name, native_session_id),
                 )
                 conn.commit()
                 return cur.rowcount > 0
         except Exception:
             logger.warning(
                 "update_session_title failed for %s",
-                sdk_session_id[:12],
+                native_session_id[:12],
                 exc_info=True,
             )
             return False

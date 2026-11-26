@@ -102,14 +102,14 @@ def _first_user_message_text(entry: dict[str, Any]) -> str:
     return str(content)
 
 
-def _get_opencode_session_model(sdk_session_id: str) -> str | None:
+def _get_opencode_session_model(native_session_id: str) -> str | None:
     """Get the model in 'provider/model' format from opencode DB."""
     db_path = _resolve_opencode_db_path()
     if not db_path or not db_path.exists():
         return None
     try:
         conn = sqlite3.connect(str(db_path))
-        row = conn.execute("SELECT model FROM session WHERE id=?", (sdk_session_id,)).fetchone()
+        row = conn.execute("SELECT model FROM session WHERE id=?", (native_session_id,)).fetchone()
         conn.close()
         if not row or not row[0]:
             return None
@@ -118,8 +118,8 @@ def _get_opencode_session_model(sdk_session_id: str) -> str | None:
         return None
 
 
-def _get_opencode_session_title(sdk_session_id: str | None) -> str | None:
-    if not sdk_session_id:
+def _get_opencode_session_title(native_session_id: str | None) -> str | None:
+    if not native_session_id:
         return None
     db_path = _resolve_opencode_db_path()
     if not db_path:
@@ -127,7 +127,7 @@ def _get_opencode_session_title(sdk_session_id: str | None) -> str | None:
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
-        cur = conn.execute("SELECT title FROM session WHERE id = ?", (sdk_session_id,))
+        cur = conn.execute("SELECT title FROM session WHERE id = ?", (native_session_id,))
         row = cur.fetchone()
         conn.close()
         if row and row["title"] and not row["title"].startswith("New session"):
@@ -287,7 +287,7 @@ class SessionInfo:
     result: str | None = None
     predecessor: dict[str, str] | None = None
     successors: list[dict[str, str]] = field(default_factory=list)
-    sdk_session_id: str | None = None
+    native_session_id: str | None = None
     model: str = ""
     project_dir: str = ""
     run_id: str | None = None  # run 归属投影（账面真相在 run_sessions，此为冗余读面）
@@ -325,7 +325,7 @@ class SessionInfo:
 
         activity = _recent_activity(events) if events else []
 
-        sdk_id = getattr(s, "sdk_session_id", None)
+        sdk_id = getattr(s, "native_session_id", None)
         model = _resolve_session_model(config, sdk_id)
         reviewer = getattr(config, "reviewer", None) if config else None
         reply_fallback = getattr(s, "waiting_for_auto_reply_fallback", False) is True
@@ -348,7 +348,7 @@ class SessionInfo:
             error=getattr(s, "last_error", None) or getattr(s, "_error", None),
             birth_handoff_doc=getattr(s, "birth_handoff_doc", None),
             result=getattr(s, "result", None),
-            sdk_session_id=sdk_id,
+            native_session_id=sdk_id,
             model=model,
             project_dir=getattr(config, "cwd", "") if config else "",
             run_id=getattr(config, "run_id", None) if config else None,
@@ -623,7 +623,7 @@ class SessionAPI:
         return resolve_runtime(session_runtime or self._orch.config.runtime)
 
     def transcript_context(self, session_id: str) -> dict[str, Any] | None:
-        """轻量取转录定位字段（sdk_session_id/name/cwd）；session 不在池内返回 None。
+        """轻量取转录定位字段（native_session_id/name/cwd）；session 不在池内返回 None。
 
         无 get_session 的名称同步与链填充副作用，供转录源定位消费。
         """
@@ -632,7 +632,7 @@ class SessionAPI:
             return None
         config = getattr(session, "config", None)
         return {
-            "sdk_session_id": getattr(session, "sdk_session_id", None),
+            "native_session_id": getattr(session, "native_session_id", None),
             "name": getattr(config, "name", "") or session_id,
             "cwd": getattr(config, "cwd", "") or "",
             "env_overrides": getattr(config, "env_overrides", None),
@@ -849,7 +849,7 @@ class SessionAPI:
         """Import an opencode session as a Workflow Controller session.
 
         Reads metadata + events from the opencode DB, creates a matching
-        Workflow Controller Session, and stores the sdk_session_id so it can be resumed.
+        Workflow Controller Session, and stores the native_session_id so it can be resumed.
         """
         db_path = _resolve_opencode_db_path()
         if not db_path or not db_path.exists():
@@ -885,7 +885,7 @@ class SessionAPI:
 
         now = _dt.now(tz=UTC).isoformat()
         await self._store_imported_session(
-            oid, title=title, config=config, sdk_session_id=opencode_session_id, now=now
+            oid, title=title, config=config, native_session_id=opencode_session_id, now=now
         )
 
         logger.info("Imported %s → %s (events=%d)", opencode_session_id[:12], oid, len(event_objs))
@@ -981,7 +981,7 @@ class SessionAPI:
 
         now = _dt.now(tz=UTC).isoformat()
         await self._store_imported_session(
-            oid, title=title, config=config, sdk_session_id=claude_session_id, now=now
+            oid, title=title, config=config, native_session_id=claude_session_id, now=now
         )
 
         return oid
@@ -1282,7 +1282,7 @@ class SessionAPI:
         *,
         title: str,
         config: Any,
-        sdk_session_id: str,
+        native_session_id: str,
         now: str,
     ) -> None:
         """导入会话的会话记录落库（opencode/Claude 两条导入路径共用）。"""
@@ -1297,7 +1297,7 @@ class SessionAPI:
             stop_reason="imported",
             loop_hold=None,
             config_json=_json.dumps(config.model_dump(), default=str),
-            sdk_session_id=sdk_session_id,
+            native_session_id=native_session_id,
             created_at=now,
             last_activity=now,
             current_iteration=0,
@@ -1306,10 +1306,10 @@ class SessionAPI:
             last_error=None,
         )
 
-    async def _create_import_session(self, config: SessionConfig, sdk_session_id: str) -> str:
+    async def _create_import_session(self, config: SessionConfig, native_session_id: str) -> str:
         """按导入语义创建 session（idle/imported 终态，不接 loop），返回其 id。"""
         session = await self._orch.pool.create(config)
-        session.sdk_session_id = sdk_session_id
+        session.native_session_id = native_session_id
         session.loop_status = "no"
         session.stop_reason = "imported"
         return session.id
@@ -1366,7 +1366,7 @@ class SessionAPI:
         name = s.name
         if _is_design_md_compliant_name(name):
             return name
-        sdk_id = getattr(s, "sdk_session_id", None)
+        sdk_id = getattr(s, "native_session_id", None)
         title = _get_opencode_session_title(sdk_id)
         return title if title else name
 
@@ -1391,7 +1391,7 @@ class SessionAPI:
         name = s.name
         if _is_design_md_compliant_name(name):
             return  # Keep structured names as-is
-        sdk_id = getattr(s, "sdk_session_id", None)
+        sdk_id = getattr(s, "native_session_id", None)
         title = _get_opencode_session_title(sdk_id)
         if title and title != name:
             try:

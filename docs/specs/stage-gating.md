@@ -211,7 +211,7 @@ LoopEngine._run_iteration (worker EOF 后)
   └─ gate.block    → _pending_gate_feedback=feedback; LOG_LOOP("continue")
                        │
                        ▼
-          下一轮 iter N+1: fresh worker subprocess --resume sdk_session_id
+          下一轮 iter N+1: fresh worker subprocess --resume native_session_id
                            feedback 当本轮 prompt（程序化，无 "User intervention:" 前缀）
 ```
 
@@ -242,7 +242,7 @@ N 个阶段 = N 个 iteration，每个 iteration 的 boundary 产出**两个检�
 
 manual 是**全局**（所有阶段都停等审）；若想要 per-stage 选择性人审（某些阶段人审、其余自动），那是未来的 `gate: human`（human gate）的事，不在 reviewer 模式里。
 
-**block 跨 iteration**（关键设计）：每个 `block` 经 loop 的 feedback 注入（`{{feedback or '继续。'}}`）成为下一轮 prompt，下一轮 spawn fresh worker subprocess `--resume` 同一 `sdk_session_id`——所以 N 个检查点跨 N 个 iteration、N 次 subprocess 调用，**不是**同一 turn 内的连续 block。
+**block 跨 iteration**（关键设计）：每个 `block` 经 loop 的 feedback 注入（`{{feedback or '继续。'}}`）成为下一轮 prompt，下一轮 spawn fresh worker subprocess `--resume` 同一 `native_session_id`——所以 N 个检查点跨 N 个 iteration、N 次 subprocess 调用，**不是**同一 turn 内的连续 block。
 
 **driver-agnostic（CC / opencode / CLI 一致）**：这是统一到 iteration boundary 的根本原因。早期版本门禁用 `on_stop_hook`：CC 的 Stop-hook `block` 返回值能重定向**活 worker**（把 decision 当「带 reason 继续本轮」，5 检查点全在同 turn）；但 **opencode 的 stop 返回值被丢弃**（worker 已退出，事件到达在退出之后）→ stop-hook 门禁**对 opencode 无效**。统一到 iteration boundary 后，三个 runtime 都走「block → 下一轮新 subprocess」，行为一致。
 

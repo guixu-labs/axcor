@@ -498,7 +498,7 @@ class SingleLoopEngine:
             "SingleLoopEngine._run_iteration: starting for session %s (role=%s, sdk_id=%s)",
             session.id,
             session.role,
-            session.sdk_session_id,
+            session.native_session_id,
         )
 
         iteration = session.current_iteration + 1

@@ -89,7 +89,7 @@ class TestDerive:
             file_states,
             task_part_ids,
             session_id="ops_sess_001",
-            sdk_session_id="ses_094ff8ee7ffe",
+            native_session_id="ses_094ff8ee7ffe",
             bridges=bridges,
         )
         assert len(cps) == 2
@@ -141,7 +141,7 @@ class TestDerive:
             file_states,
             task_part_ids,
             session_id="ops_sess_002",
-            sdk_session_id="ses_main002",
+            native_session_id="ses_main002",
             bridges=[],
         )
         assert len(cps) == 4
@@ -173,7 +173,7 @@ class TestDerive:
             file_states,
             {},
             session_id="ops_sess_003",
-            sdk_session_id="ses_main003",
+            native_session_id="ses_main003",
             bridges=None,  # 无 bridge
         )
         # subagent_type 从 argsJson 取（developer）
@@ -192,10 +192,10 @@ class TestDerive:
             file_states,
             {},
             session_id="ops",
-            sdk_session_id="ses_xyz12345",
+            native_session_id="ses_xyz12345",
         )
         for cp in cps:
-            # cp_rc_<sdk_session_id[:8]>_<n:03d>，与实时的 cp_<sid>_<n> 区分（§6.8）
+            # cp_rc_<native_session_id[:8]>_<n:03d>，与实时的 cp_<sid>_<n> 区分（§6.8）
             assert cp.checkpoint_id.startswith("cp_rc_ses_xyz1_")
             assert cp.checkpoint_id != "cp_ses_xyz12_001"  # 与实时格式区分
 
@@ -209,7 +209,7 @@ class TestDerive:
             file_states,
             {},
             session_id="ops",
-            sdk_session_id="ses_main004",
+            native_session_id="ses_main004",
         )
         assert len(cps) == 1
         assert cps[0].trigger == "session_complete"
@@ -233,7 +233,7 @@ class TestDerive:
             file_states,
             {"ses_sub_001": "prt_1", "ses_sub_002": "prt_2"},
             session_id="ops_sess_005",
-            sdk_session_id="ses_main005",
+            native_session_id="ses_main005",
         )
         # 写入 events.db
         db_path = tmp_path / ".workflow-controller" / "events.db"
@@ -272,7 +272,7 @@ class TestDerive:
                 file_states,
                 {},
                 session_id="ops",
-                sdk_session_id="ses_main006",
+                native_session_id="ses_main006",
             )
             assert len(cps) == 3
             # 第二个检查点的 subagent_session_id 来自 file_state（timeline 边界缺）

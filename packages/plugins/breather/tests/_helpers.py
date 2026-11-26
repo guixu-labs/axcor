@@ -69,7 +69,7 @@ def subagent_stop_event(session, agent_id="a1", agent_type="dev", status=None):
     if status is not None:
         data["status"] = status
     return Event.create(
-        session_id=session.sdk_session_id,
+        session_id=session.native_session_id,
         iteration=0,
         event_type=EventType.SUBAGENT_STOP,
         data=data,

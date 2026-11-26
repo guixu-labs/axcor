@@ -42,7 +42,7 @@ def _make_session(name="worker", cwd=None):
         initial_prompt="run a2h pipeline",
     )
     s = Session(name=name, role="worker", config=cfg)
-    s.sdk_session_id = "cc-" + uuid.uuid4().hex[:8]
+    s.native_session_id = "cc-" + uuid.uuid4().hex[:8]
     return s
 
 
@@ -259,7 +259,7 @@ class TestContextTracker:
         """有 result event 时 check 走 check_recorded（免 fork），不调 /context。
         driver_factory 注入抛错的工厂证明不走 command 路径。
         """
-        session.sdk_session_id = "sdk-1"
+        session.native_session_id = "sdk-1"
         store = MagicMock()
         store.get_events_sync.return_value = [_make_result(50000)]
         failing_factory = MagicMock(side_effect=AssertionError("should not fork"))
@@ -282,7 +282,7 @@ class TestContextTracker:
         """无已记录读数 → fallback _check_from_command。sdk_id=None 使 command
         短路返回未知（不真起子进程）。
         """
-        session.sdk_session_id = None
+        session.native_session_id = None
         store = MagicMock()
         store.get_events_sync.return_value = []  # 无 result event
         tracker = ContextTracker(store.get_events_sync, session, strategy="token", threshold_pct=70)
@@ -291,8 +291,8 @@ class TestContextTracker:
 
     @staticmethod
     def test_context_cmd_no_sdk(session):
-        """_check_from_command 无 sdk_session_id（无 resume 目标）时返回未知。"""
-        session.sdk_session_id = None
+        """_check_from_command 无 native_session_id（无 resume 目标）时返回未知。"""
+        session.native_session_id = None
         store = MagicMock()
         tracker = ContextTracker(
             store.get_events_sync, session, strategy="context", threshold_pct=70
@@ -307,7 +307,7 @@ class TestContextTracker:
         """driver_factory 未装配（组合根没接线）是装配错误：显式抛错让上层
         感知，而不是静默返回 0 令牌降级 handoff（fail-open 危险）。
         """
-        session.sdk_session_id = "sdk-1"
+        session.native_session_id = "sdk-1"
         store = MagicMock()
         store.get_events_sync.return_value = []  # 无 result → fallback command
         tracker = ContextTracker(store.get_events_sync, session, strategy="auto", threshold_pct=70)
@@ -918,7 +918,7 @@ async def _run_handoff_test(
             if notify_cb:
                 await notify_cb(
                     Event.create(
-                        session_id=session.sdk_session_id,
+                        session_id=session.native_session_id,
                         iteration=0,
                         event_type=EventType.TOOL_RESULT,
                         data={"tool_name": "a2h-handoff"},
@@ -1044,7 +1044,7 @@ class TestBreather:
         plugin = BreatherPlugin(_cfg("token", 70), MagicMock())
         plugin.install(_ctx(orch))
 
-        result = getattr(plugin, "_find_session_by_sdk_id")(session.sdk_session_id)
+        result = getattr(plugin, "_find_session_by_sdk_id")(session.native_session_id)
         assert result is session
 
     @staticmethod
@@ -1059,7 +1059,7 @@ class TestBreather:
         plugin.install(_ctx(orch))
 
         result = getattr(plugin, "_find_session_by_sdk_id")("nonexistent-id")
-        assert result is None  # 不匹配任何 sdk_session_id
+        assert result is None  # 不匹配任何 native_session_id
 
     @staticmethod
     def test_check_context_method():
@@ -1180,7 +1180,7 @@ class TestBreather:
     @pytest.mark.asyncio
     async def test_check_context_wires_services_create_driver(self):
         """端到端 wiring 锁定：_check_context 把 PluginServices.create_driver
-        注入 ContextTracker——events 为空 + session 带 sdk_session_id 时走
+        注入 ContextTracker——events 为空 + session 带 native_session_id 时走
         command 路径，注入的工厂必须被调用。若未来误删 driver_factory=
         传参，会命中未装配的 None 提前抛 RuntimeError，测试失败。
         """
@@ -1257,7 +1257,7 @@ class TestNotifySkill:
 
         await cb_store[0](
             Event.create(
-                session_id=session.sdk_session_id,
+                session_id=session.native_session_id,
                 iteration=0,
                 event_type=EventType.TOOL_RESULT,
                 data={"tool_name": "a2h-notify"},
@@ -1300,7 +1300,7 @@ class TestNotifySkill:
 
         await cb_store[0](
             Event.create(
-                session_id=session.sdk_session_id,
+                session_id=session.native_session_id,
                 iteration=0,
                 event_type=EventType.TOOL_RESULT,
                 data={"tool_name": "some-other-skill"},
@@ -1331,7 +1331,7 @@ class TestNotifySkill:
 
         await cb_store[0](
             Event.create(
-                session_id=session.sdk_session_id,
+                session_id=session.native_session_id,
                 iteration=0,
                 event_type=EventType.TOOL_RESULT,
                 data={"tool_name": "a2h-notify"},
@@ -1367,7 +1367,7 @@ class TestDoHandoffPhase2:
     @pytest.mark.asyncio
     async def test_new_worker_start_fails_does_not_stop_old(self, monkeypatch, tmp_path):
         session = _make_session(cwd=str(tmp_path))
-        session.sdk_session_id = "sdk-old"
+        session.native_session_id = "sdk-old"
         agent_session = MagicMock(id="agent-1")
         agent_session.name = "worker-handoff"
         stop_mock = AsyncMock()
@@ -1395,7 +1395,7 @@ class TestDoHandoffPhase2:
         worker / handoff-agent / worker-h2 三者 runtime 不一致。
         """
         session = _make_session(cwd=str(tmp_path))
-        session.sdk_session_id = "sdk-old"
+        session.native_session_id = "sdk-old"
         session.config.runtime = "opencode"  # worker 用 per-session 覆盖
 
         agent_session = MagicMock(id="agent-1")
@@ -1488,7 +1488,7 @@ class TestOnIterationBoundary:
         orch.resolve_cli_session_id.return_value = session.id
         setattr(plugin, "_arm_active_handoff", MagicMock())
         await getattr(plugin, "_on_context_event")(
-            Event.create(session.sdk_session_id, 1, EventType.SUBAGENT_STOP)
+            Event.create(session.native_session_id, 1, EventType.SUBAGENT_STOP)
         )
         getattr(plugin, "_arm_active_handoff").assert_not_called()
         response = await plugin.request_handoff(session.id, force=False)
@@ -1699,7 +1699,7 @@ class TestSubagentReturnHandoff:
         session, plugin = _install_over_threshold_with_driver_stop(monkeypatch, input_tokens=50000)
 
         # force（被动调）→ 设标志，不立即切
-        await plugin.request_handoff(session.sdk_session_id, force=True)
+        await plugin.request_handoff(session.native_session_id, force=True)
         assert getattr(plugin, "_handoff_force_pending") is True
         assert getattr(plugin, "_handoff_stop_armed") is False  # 还没 arm（没 subagent 返回）
 
@@ -1754,7 +1754,7 @@ async def test_live_context_triggers_subagent_and_stop_handoff(monkeypatch):
     )
     monkeypatch.setattr(plugin, "_arm_active_handoff", MagicMock())
     await getattr(plugin, "_on_context_event")(
-        Event.create(session.sdk_session_id, 1, EventType.SUBAGENT_STOP),
+        Event.create(session.native_session_id, 1, EventType.SUBAGENT_STOP),
     )
     getattr(plugin, "_arm_active_handoff").assert_called_once_with(session)
     # Stop hook 后备停点：自然停止时快照已超阈值 → 捕获 final_text 交接
@@ -1786,7 +1786,7 @@ def test_live_context_stop_hook_respects_session_guards(role, paused, in_flight)
 @pytest.mark.asyncio
 async def test_unknown_context_never_claims_below_threshold_and_force_skips_probe(monkeypatch):
     session = _make_session()
-    session.sdk_session_id = None
+    session.native_session_id = None
     orch = _make_orchestrator(session, [])
     plugin = BreatherPlugin(_cfg(), MagicMock())
     plugin.install(_ctx(orch))

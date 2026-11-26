@@ -15,14 +15,49 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
 
+from workflow_controller.core.runs import RunStore
 from workflow_controller.session.events import Event, EventType
+from workflow_controller.store.event_store import EventStore
 
 if TYPE_CHECKING:
-    from workflow_controller.store.event_store import EventStore
+    from pathlib import Path
+
+
+@pytest.mark.parametrize("run_store_first", [False, True], ids=["event-store", "run-store"])
+async def test_legacy_session_id_is_preserved_on_startup(
+    tmp_path: Path, run_store_first: bool
+) -> None:
+    """两个存储入口均可原地升级已有会话记录。"""
+    db_path = tmp_path / "events.db"
+    runs = RunStore(db_path)
+    await runs.list_runs()
+    runs.close()
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        conn.execute("ALTER TABLE sessions RENAME COLUMN native_session_id TO sdk_session_id")
+        conn.execute(
+            "INSERT INTO sessions (id, name, config_json, sdk_session_id, created_at, last_activity)"
+            " VALUES ('s1', 'worker', '{}', 'runtime-1', datetime('now'), datetime('now'))"
+        )
+
+    if run_store_first:
+        runs = RunStore(db_path)
+        await runs.list_runs()
+        runs.close()
+        with closing(sqlite3.connect(db_path)) as conn:
+            assert conn.execute("SELECT native_session_id FROM sessions").fetchone() == (
+                "runtime-1",
+            )
+
+    store = EventStore(db_path)
+    session = store.get_session_sync("s1")
+    assert session is not None
+    assert session["native_session_id"] == "runtime-1"
+    assert store.list_sessions_sync()[0]["native_session_id"] == "runtime-1"
 
 
 def _make_event(session_id: str = "s1", iteration: int = 0) -> Event:

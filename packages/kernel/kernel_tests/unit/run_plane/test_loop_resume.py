@@ -72,7 +72,7 @@ class FakeSession:
         self._resume_reprompt = False
         self._pending_gate_feedback = None
         self.pause_requested = False
-        self.sdk_session_id = None
+        self.native_session_id = None
 
     # 与 Session 的公有访问口对齐（loop 引擎经公有方法读写这些运行态）；
     # 方法序与实现变量名有意与 Session 不同，避免构成重复代码窗口
@@ -173,7 +173,7 @@ async def test_pause_and_resume_preserve_query_number(
         SessionConfig(name="worker", role="worker", initial_prompt="创建 output/agent-2.txt")
     )
     session.current_iteration = paused_iteration
-    monkeypatch.setattr(session, "_recover_sdk_session_id", lambda: None)
+    monkeypatch.setattr(session, "_recover_native_session_id", lambda: None)
     prompts: list[str] = []
     monkeypatch.setattr(session, "query", FakeSession(prompts, [[]]).query)
 

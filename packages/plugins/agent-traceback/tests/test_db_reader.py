@@ -171,7 +171,7 @@ class TestReadSession:
         )
         with CannbotDbReader(db) as r:
             meta = r.read_session()
-        assert meta.sdk_session_id == "ses_main_001"
+        assert meta.native_session_id == "ses_main_001"
         assert meta.initial_prompt == "please do X"
         assert meta.framework == "opencode"
         assert meta.model == "cannbot/glm-5.2"
@@ -356,7 +356,7 @@ class TestReadTimeline:
             assert r.validate() is True
             meta = r.read_session()
             assert meta.framework == "opencode"
-            assert meta.sdk_session_id.startswith("ses_")
+            assert meta.native_session_id.startswith("ses_")
             tl = r.read_timeline()
             # 样例 db 含 1962 turn + 2186 tool_call = 4148 entries
             assert len(tl) == 1962 + 2186

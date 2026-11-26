@@ -96,7 +96,7 @@ async def _add_session_roster(
             "name": name or sid,
             "role": "executor",
             "state": "idle",
-            "sdk_session_id": native,
+            "native_session_id": native,
             "config_json": config_json,
             "created_at": "2026-10-19T10:00:00",
             "last_activity": "2026-10-19T10:00:00",

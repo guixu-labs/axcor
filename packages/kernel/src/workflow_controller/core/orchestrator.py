@@ -387,7 +387,7 @@ class Orchestrator:
         )
         provider = self.auth_rotator.get_provider(replacement)
         session.config.provider_index = replacement
-        session.sdk_session_id = None
+        session.native_session_id = None
         if provider.model:
             session.config.model = provider.model
         await self.pool.persist(session)
@@ -482,7 +482,7 @@ class Orchestrator:
         self,
         config: SessionConfig,
         *,
-        resume_sdk_session_id: str | None = None,
+        resume_native_session_id: str | None = None,
         plugin_metadata: dict[str, dict[str, Any]] | None = None,
         start_action: str = "session_started",
         inherit_overlays_from: str | None = None,
@@ -518,14 +518,14 @@ class Orchestrator:
             self._overlays.transfer_session_overlays(session.id, inherit_overlays_from)
         # Set resume + plugin metadata BEFORE activation so the first query
         # resumes the seeded session.
-        self._preset_resume_session(session, resume_sdk_session_id, initial_current_iteration)
-        # 再次落库：sdk_session_id / _resume_next / current_iteration 在 create 之后才设。
+        self._preset_resume_session(session, resume_native_session_id, initial_current_iteration)
+        # 再次落库：native_session_id / _resume_next / current_iteration 在 create 之后才设。
         await self.pool.persist(session)
         await self._emit_session_auto_event(
             session.id,
             start_action,
             config,
-            resume_sdk_session_id or "",
+            resume_native_session_id or "",
         )
         return await self._activate_or_discard(session)
 
@@ -1537,7 +1537,7 @@ class Orchestrator:
             await self.pool.persist(session)
             return True
         session.config.provider_index = replacement
-        session.sdk_session_id = None
+        session.native_session_id = None
         provider = rotator.get_provider(replacement)
         if provider.model:
             session.config.model = provider.model
@@ -2096,7 +2096,7 @@ class Orchestrator:
         if self.pool.get(native_or_workflow_controller_id) is not None:
             return native_or_workflow_controller_id
         for session in self.pool.list_sessions():
-            if session.sdk_session_id == native_or_workflow_controller_id:
+            if session.native_session_id == native_or_workflow_controller_id:
                 self._cli_to_workflow_controller_session[native_or_workflow_controller_id] = (
                     session.id
                 )
@@ -2218,12 +2218,12 @@ class Orchestrator:
         session = self.pool.get(event.session_id)
         # ITERATION_START（cli 的 init / sdk 的 task_started / opencode 的
         # id_ready ）首次带 session id 时存下，供 pause→resume 续 session 用。
-        if session and not session.sdk_session_id:
-            session.sdk_session_id = cli_id
+        if session and not session.native_session_id:
+            session.native_session_id = cli_id
             # Persist immediately so it survives restarts
             await self.pool.persist(session)
             logger.info(
-                "Captured sdk_session_id %s for session %s", cli_id[:12], event.session_id[:12]
+                "Captured native_session_id %s for session %s", cli_id[:12], event.session_id[:12]
             )
         # native id 记账（hook 路由权威源）：每次绑定都重记，最新持有唯一。
         # 列先落、映射随后——列是重启后的唯一权威源，换绑两段间崩溃不会
@@ -2248,7 +2248,7 @@ class Orchestrator:
         # 反向注入：让 pool._persist_session 能调到 event_router.store_session
         # 落盘到 events.db 的 sessions 表。漏调这条会导致 _persist_session 一直
         # return None（_event_router is None），events.db sessions 表没人写，
-        # 进程被 kill 时丢 sdk_session_id / result 等关键状态。
+        # 进程被 kill 时丢 native_session_id / result 等关键状态。
         self.pool.set_event_router(self.event_router)
         # session 创建入口接线：一切创建路径（含 import/重建旁路）都过此生成归属
         self.pool.set_affiliation_hook(self._on_pool_session_created)
@@ -2321,11 +2321,11 @@ class Orchestrator:
         session_id: str,
         action: str,
         config: SessionConfig,
-        resume_sdk_session_id: str,
+        resume_native_session_id: str,
     ) -> None:
         """session 出生审计事件（start_action 与 resume 标识参数化）。"""
         await self.event_router.store(
-            _build_session_auto_event(session_id, action, config, resume_sdk_session_id)
+            _build_session_auto_event(session_id, action, config, resume_native_session_id)
         )
 
     async def _await_loop_task_registration(

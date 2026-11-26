@@ -574,7 +574,7 @@ def _verify_phase3(facts: _Phase3Facts) -> bool:
     )
     return (
         tb.get("ok") is True
-        and tb.get("resume_sdk_session_id")  # seed 预制 session + resume
+        and tb.get("resume_native_session_id")  # seed 预制 session + resume
         and fork is not None
         and fork_bt
         == {
@@ -584,7 +584,7 @@ def _verify_phase3(facts: _Phase3Facts) -> bool:
             "fork_root": fork_bt["fork_root"],
             "fork_cwd": fork_bt["fork_cwd"],
         }
-        and fork.sdk_session_id == tb.get("resume_sdk_session_id")  # sdk id = 预制 session
+        and fork.native_session_id == tb.get("resume_native_session_id")  # sdk id = 预制 session
         and getattr(fork, "_resume_next", False) is True  # 首轮 --resume
         and _is_continue  # 透明续跑信号
         and _no_leak  # 无重放语义泄漏
@@ -616,7 +616,7 @@ def _log_phase3(
     """打印 Phase 3 结果。"""
     logger.info(
         f"  POST /traceback → replay_session={(tb.get('session_id') or '')[:12]}"
-        f"  resume={(tb.get('resume_sdk_session_id') or '')[:12]}"
+        f"  resume={(tb.get('resume_native_session_id') or '')[:12]}"
     )
     restored_designs = bool(
         fork_cwd
@@ -649,7 +649,7 @@ async def _run_phase3(app, orch, session, origin_sid: str, xdg: Path, project_di
     banner("[Phase 3] POST /traceback 从 cp#3 重放 → 重放 session 里 developer 还没跑")
     session.loop_status = "no"
     session.stop_reason = "reviewer_complete"
-    session.sdk_session_id = ORIGIN_SDK_SESSION
+    session.native_session_id = ORIGIN_SDK_SESSION
     _seed_origin_db(xdg, project_dir)
     tb = await _http_post(
         app,
@@ -659,7 +659,7 @@ async def _run_phase3(app, orch, session, origin_sid: str, xdg: Path, project_di
     fork_sid = tb.get("session_id", "")
     fork = orch.pool.get(fork_sid)
     fork_cwd = Path(tb["fork_cwd"]) if tb.get("fork_cwd") else None
-    resume_sid = tb.get("resume_sdk_session_id", "")
+    resume_sid = tb.get("resume_native_session_id", "")
     # 验证 seed 把 part data 里 origin cwd 绝对路径 rewrite 为 fork cwd
     # （防止 resume 后主 agent 沿用旧绝对路径把文件写到源目录而非 fork cwd）
     # 透明重放隔离：seeded session 写到 fork 独立 db（<fork_cwd>/.workflow-controller/opencode/opencode.db），

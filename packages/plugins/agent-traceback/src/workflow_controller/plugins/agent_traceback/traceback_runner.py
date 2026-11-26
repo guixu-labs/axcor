@@ -44,7 +44,7 @@ system_prompt / L2 第一条 user message）重新决定派 X、派 Y、派 Z、
    resume + per-fork env_overrides 让 worker 子进程读取 fork 独立的对话史）。
 
 约束：仅对已整体跑完的 session 重放。重放产生独立 session（不复用原
-sdk_session_id），fork 关系在拓扑图并行显示。
+native_session_id），fork 关系在拓扑图并行显示。
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ class _ReplayPreflight:
     cp: Any
     origin: Any
     cwd: str
-    sdk_session_id: str
+    native_session_id: str
     runtime: str
     base_config: SessionConfig
 
@@ -120,7 +120,7 @@ class _ForkSeed:
     """截断对话史写入 fork 独立存储后的产物：新 sdk session id + per-fork env。"""
 
     fork_id: str
-    new_sdk_session_id: str
+    new_native_session_id: str
     fork_env: dict[str, str]
 
 
@@ -295,7 +295,7 @@ def _fork_success_result(
         pre.origin_session_id[:12],
         pre.cp.checkpoint_id,
         fork_cwd,
-        seed.new_sdk_session_id,
+        seed.new_native_session_id,
         fork_cwd / ".workflow-controller",
     )
     return {
@@ -303,7 +303,7 @@ def _fork_success_result(
         "session_id": session.id,
         "fork_cwd": str(fork_cwd),
         "fork_root": str(fork_root),
-        "resume_sdk_session_id": seed.new_sdk_session_id,
+        "resume_native_session_id": seed.new_native_session_id,
         "origin_checkpoint_id": pre.cp.checkpoint_id,
     }
 
@@ -701,15 +701,15 @@ class TracebackRunner:
         reason = _checkpoint_reject_reason(cp, origin_session_id, checkpoint_id)
         if reason is not None:
             return {"ok": False, "error": reason}
-        # 2. 解析 origin session（取 cwd + sdk_session_id + 完整 SessionConfig）
+        # 2. 解析 origin session（取 cwd + native_session_id + 完整 SessionConfig）
         ctx = await self._resolve_origin_context(origin_session_id)
         if ctx is None:
             return {"ok": False, "error": "origin session not found"}
-        origin, cwd, sdk_session_id, origin_runtime, base_config = ctx
-        if not sdk_session_id:
+        origin, cwd, native_session_id, origin_runtime, base_config = ctx
+        if not native_session_id:
             return {
                 "ok": False,
-                "error": "origin session has no sdk_session_id; cannot replay its conversation",
+                "error": "origin session has no native_session_id; cannot replay its conversation",
             }
 
         # 仅对已整体跑完的 session 重放
@@ -719,7 +719,7 @@ class TracebackRunner:
                 "error": "origin session still running — traceback only on finished sessions",
             }
         rt = await self._resolve_replay_runtime(
-            sdk_session_id,
+            native_session_id,
             cwd,
             origin_runtime,
             base_config,
@@ -732,7 +732,7 @@ class TracebackRunner:
             cp=cp,
             origin=origin,
             cwd=cwd,
-            sdk_session_id=sdk_session_id,
+            native_session_id=native_session_id,
             runtime=rt,
             base_config=base_config,
         )
@@ -742,12 +742,12 @@ class TracebackRunner:
     ) -> tuple[Any, str, str | None, str | None, SessionConfig] | None:
         """解析 origin：pool 命中 → 深拷贝 config；重启后 → 读 roster 行反序列化。
 
-        返回 ``(origin, cwd, sdk_session_id, origin_runtime, base_config)``；找不到返回 None。
+        返回 ``(origin, cwd, native_session_id, origin_runtime, base_config)``；找不到返回 None。
         """
         origin = self._services.find_session(origin_session_id)
         if origin is not None:
             cwd = getattr(origin.config, "cwd", "") or str(self._work_dir)
-            sdk_session_id = origin.sdk_session_id
+            native_session_id = origin.native_session_id
             origin_runtime = getattr(origin.config, "runtime", None)
             # deep copy origin config 作为基底（完整继承 loop/system_prompt/stages/criteria/
             # model/permission_mode/allowed_tools/max_turns/max_budget_usd/skills_path/
@@ -763,18 +763,18 @@ class TracebackRunner:
             except json.JSONDecodeError:
                 cfg_dict = {}
             cwd = cfg_dict.get("cwd", "") or str(self._work_dir)
-            sdk_session_id = sess_row.get("sdk_session_id")
+            native_session_id = sess_row.get("native_session_id")
             origin_runtime = cfg_dict.get("runtime")
             # 从持久化 config 反序列化 base_config（完整继承 origin 配置）
             try:
                 base_config = SessionConfig(**cfg_dict)
             except Exception:
                 base_config = SessionConfig(name="origin", cwd=cwd)
-        return origin, cwd, sdk_session_id, origin_runtime, base_config
+        return origin, cwd, native_session_id, origin_runtime, base_config
 
     async def _resolve_replay_runtime(
         self,
-        sdk_session_id: str,
+        native_session_id: str,
         cwd: str,
         origin_runtime: str | None,
         base_config: SessionConfig,
@@ -789,7 +789,7 @@ class TracebackRunner:
         # _offload 返回 Any，此处按 detect_replay_runtime 的实际返回类型收窄为 str。
         source_runtime: str = await self._offload(
             detect_replay_runtime,
-            sdk_session_id=sdk_session_id,
+            native_session_id=native_session_id,
             cwd=cwd,
             configured_runtime=origin_runtime,
             default_runtime=self._services.default_runtime() or "claude_sdk",
@@ -841,7 +841,7 @@ class TracebackRunner:
             #    让 Jinja {{ iteration }} 与 LLM 自感知进度对齐。
             session = await self._services.start_resumed_session(
                 config,
-                resume_sdk_session_id=seed.new_sdk_session_id,
+                resume_native_session_id=seed.new_native_session_id,
                 plugin_metadata={"agent_traceback": {"birth_traceback": birth}},
                 start_action="traceback_session_started",
                 inherit_overlays_from=pre.origin_session_id,
@@ -897,12 +897,12 @@ class TracebackRunner:
         is_final: bool,
     ) -> _ForkSeed | dict[str, Any]:
         """Claude CLI 源：按检查点截断 JSONL 对话史，写入 fork 独立配置目录。"""
-        new_sdk_session_id = str(uuid4())
+        new_native_session_id = str(uuid4())
         claude_config, seed_error = await self._offload(
             seed_claude_session,
-            source_session_id=pre.sdk_session_id,
+            source_session_id=pre.native_session_id,
             source_cwd=pre.cwd,
-            new_session_id=new_sdk_session_id,
+            new_session_id=new_native_session_id,
             fork_cwd=fork_cwd,
             checkpoint_at=pre.cp.created_at,
             agent_type=pre.cp.agent_type,
@@ -919,7 +919,7 @@ class TracebackRunner:
             return {"ok": False, "error": seed_error}
         return _ForkSeed(
             fork_id=fork_id,
-            new_sdk_session_id=new_sdk_session_id,
+            new_native_session_id=new_native_session_id,
             fork_env={"CLAUDE_CONFIG_DIR": str(claude_config)},
         )
 
@@ -935,12 +935,12 @@ class TracebackRunner:
         exclude_part_id, exclude_message_id = await self._find_exclude_ids(
             pre, is_final, origin_env
         )
-        new_sdk_session_id = f"ses_tb_{fork_id}"
+        new_native_session_id = f"ses_tb_{fork_id}"
         fork_env = {"XDG_DATA_HOME": str(fork_cwd / ".workflow-controller")}
         seeded = await self._offload(
             seed_prebuilt_session,
-            source_session_id=pre.sdk_session_id,
-            new_session_id=new_sdk_session_id,
+            source_session_id=pre.native_session_id,
+            new_session_id=new_native_session_id,
             up_to_part_id=None,
             title=f"[traceback] {pre.origin_session_id[:8]} {pre.cp.checkpoint_id}",
             env=fork_env,
@@ -958,7 +958,9 @@ class TracebackRunner:
                 ),
             }
         await self._offload(self._seed_host_auth, fork_cwd)
-        return _ForkSeed(fork_id=fork_id, new_sdk_session_id=new_sdk_session_id, fork_env=fork_env)
+        return _ForkSeed(
+            fork_id=fork_id, new_native_session_id=new_native_session_id, fork_env=fork_env
+        )
 
     async def _find_exclude_ids(
         self, pre: _ReplayPreflight, is_final: bool, origin_env: dict[str, str] | None
@@ -968,7 +970,7 @@ class TracebackRunner:
             return None, None
         task_pid = pre.cp.main_part_id or await self._offload(
             find_main_part_id_for_subagent,
-            pre.sdk_session_id,
+            pre.native_session_id,
             pre.cp.agent_id,
             origin_env,
         )
@@ -976,7 +978,7 @@ class TracebackRunner:
             return None, None
         exclude_message_id = await self._offload(
             find_exclude_message_id,
-            pre.sdk_session_id,
+            pre.native_session_id,
             task_pid,
             origin_env,
         )

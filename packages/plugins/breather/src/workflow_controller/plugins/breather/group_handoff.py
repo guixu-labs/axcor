@@ -196,7 +196,7 @@ def _monitor_targets(
     return _MonitorTargets(
         session=session,
         agents=agents,
-        parent_id=session.sdk_session_id or "",
+        parent_id=session.native_session_id or "",
         runtime=runtime,
         env=env,
         window=window,
@@ -355,7 +355,7 @@ async def _begin_group_handoff(
     root, batch, handoff_number = _handoff_root(services, session, sid)
     main_handoff = root / HandoffGenerator.handoff_doc_name(sid[:8], handoff_number)
     done_path = root / HandoffGenerator.done_file_name(sid[:8], handoff_number)
-    parent_id = session.sdk_session_id or ""
+    parent_id = session.native_session_id or ""
     main_over = await _main_over_threshold(plugin, session, runtime, parent_id, env)
     await services.pause_session(sid)
     outcome.paused = await services.wait_session_done(sid, wait_timeout=10.0)

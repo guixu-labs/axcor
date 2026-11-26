@@ -132,12 +132,12 @@ class ReconstructOrchestrator:
         # cpx 导出的 Session.directory 常为空：从文件工具的目标路径推断
         # 项目根，否则文件重放拿不到可重写的 origin、路径前缀替换失效
         origin_cwd = session_meta.origin_cwd or _infer_origin_cwd(timeline)
-        sdk_session_id = session_meta.sdk_session_id
-        if not sdk_session_id:
-            error = "db has no sdk_session_id (Session.taskId is empty)"
+        native_session_id = session_meta.native_session_id
+        if not native_session_id:
+            error = "db has no native_session_id (Session.taskId is empty)"
             log.finish(f"phase=failed error={error}")
             return _import_failure(error)
-        return _ReconstructSource(session_meta, timeline, bridges, sdk_session_id, origin_cwd)
+        return _ReconstructSource(session_meta, timeline, bridges, native_session_id, origin_cwd)
 
     @staticmethod
     def _derive_checkpoints(
@@ -149,13 +149,13 @@ class ReconstructOrchestrator:
         """检查点推导（phase=checkpoint_derive）：session_id 先用占位，最后回填。"""
         log.write("phase=checkpoint_derive")
         deriver = CheckpointDeriver()
-        temp_session_id = f"rc_temp_{source.sdk_session_id[:12]}"
+        temp_session_id = f"rc_temp_{source.native_session_id[:12]}"
         return deriver.derive(
             timeline=source.timeline,
             file_states=file_states,
             task_part_ids=transcribe_result.task_part_ids,
             session_id=temp_session_id,
-            sdk_session_id=source.sdk_session_id,
+            native_session_id=source.native_session_id,
             bridges=source.bridges,
         )
 
@@ -266,7 +266,7 @@ class ReconstructOrchestrator:
             transcriber.transcribe,
             source.timeline,
             source.session_meta,
-            source.sdk_session_id,
+            source.native_session_id,
             source.bridges,
         )
         log.write(
@@ -326,13 +326,13 @@ class ReconstructOrchestrator:
         config = self._build_session_config(
             session_meta=source.session_meta,
             target_cwd=target_cwd,
-            sdk_session_id=source.sdk_session_id,
+            native_session_id=source.native_session_id,
             checkpoints=checkpoints,
         )
         # create 持久化到 events.db，重启恢复可读回
         session = await self._services.create_session(config)
-        # 设 sdk_session_id 供 TracebackRunner 查 opencode.db
-        session.sdk_session_id = source.sdk_session_id
+        # 设 native_session_id 供 TracebackRunner 查 opencode.db
+        session.native_session_id = source.native_session_id
         # 标记为「已跑完」态
         session.loop_status = "yes"
         # 溯源 metadata
@@ -340,13 +340,13 @@ class ReconstructOrchestrator:
         session.plugin_metadata["agent_traceback"] = _birth_traceback_metadata(
             db_path, source, target_cwd, checkpoints, git_existed_before, opencode_existed_before
         )
-        # create_session 在设置 sdk_session_id / loop_status / plugin_metadata 前
+        # create_session 在设置 native_session_id / loop_status / plugin_metadata 前
         # 就写了 sessions 行——此处重新持久化，让 birth_traceback 落库，否则重启后
         # 重建清理 + recent_dirs 同步会失效。
         await self._services.persist_session(session)
         # 事件落 events.db
         await self._services.store_events(
-            [_imported_event(session.id, config, db_path, source.sdk_session_id, checkpoints)]
+            [_imported_event(session.id, config, db_path, source.native_session_id, checkpoints)]
         )
         return session
 
@@ -379,7 +379,7 @@ class ReconstructOrchestrator:
             "reconstruct: imported session %s (sdk=%s) from %s → cwd=%s "
             "with %d checkpoints (%d messages + %d parts)",
             session.id,
-            source.sdk_session_id[:12],
+            source.native_session_id[:12],
             db_path,
             target_cwd,
             len(real_checkpoints),
@@ -390,7 +390,7 @@ class ReconstructOrchestrator:
             f"phase=complete session_id={session.id[:12]} checkpoints={len(real_checkpoints)}"
         )
         return _import_success(
-            session.id, source.sdk_session_id, real_checkpoints, target_cwd, transcribe_result
+            session.id, source.native_session_id, real_checkpoints, target_cwd, transcribe_result
         )
 
     async def _synthesize_historical_events(
@@ -455,7 +455,7 @@ class ReconstructOrchestrator:
         *,
         session_meta: Any,
         target_cwd: Path,
-        sdk_session_id: str,
+        native_session_id: str,
         checkpoints: list[Any] | None = None,
     ) -> SessionConfig:
         """构造 SessionConfig。
@@ -489,7 +489,7 @@ class ReconstructOrchestrator:
             loop_cfg = _derive_loop_from_checkpoints(checkpoints)
 
         return SessionConfig(
-            name=f"reconstructed-{sdk_session_id[:8]}",
+            name=f"reconstructed-{native_session_id[:8]}",
             role="worker",
             cwd=str(target_cwd),
             runtime="opencode",
@@ -627,7 +627,7 @@ class _ReconstructSource(NamedTuple):
     session_meta: Any
     timeline: list[TimelineEntry]
     bridges: list[dict[str, Any]]
-    sdk_session_id: str
+    native_session_id: str
     origin_cwd: str
 
 
@@ -675,7 +675,7 @@ def _import_failure(error: str) -> dict[str, Any]:
 
 def _import_success(
     session_id: str,
-    sdk_session_id: str,
+    native_session_id: str,
     checkpoints: list[Any],
     target_cwd: Path,
     transcribe_result: Any,
@@ -684,7 +684,7 @@ def _import_success(
     return {
         "ok": True,
         "session_id": session_id,
-        "sdk_session_id": sdk_session_id,
+        "native_session_id": native_session_id,
         "checkpoints": [
             {
                 "checkpoint_id": cp.checkpoint_id,
@@ -715,7 +715,7 @@ def _birth_traceback_metadata(
         "birth_traceback": {
             "reconstructed_from": str(db_path),
             "reconstructed_at": datetime.now(UTC).isoformat(),
-            "origin_sdk_session_id": source.sdk_session_id,
+            "origin_native_session_id": source.native_session_id,
             "origin_cwd": source.origin_cwd,
             "fork_cwd": str(target_cwd),
             "checkpoints": len(checkpoints),
@@ -733,7 +733,7 @@ def _imported_event(
     session_id: str,
     config: SessionConfig,
     db_path: Path,
-    sdk_session_id: str,
+    native_session_id: str,
     checkpoints: list[Any],
 ) -> Event:
     """导入完成的 LOG_AUTO 事件行。"""
@@ -746,7 +746,7 @@ def _imported_event(
             "name": config.name,
             "role": config.role,
             "source_db": str(db_path),
-            "sdk_session_id": sdk_session_id,
+            "native_session_id": native_session_id,
             "checkpoints": len(checkpoints),
         },
     )

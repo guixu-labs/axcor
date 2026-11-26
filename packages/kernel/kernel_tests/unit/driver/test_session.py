@@ -29,16 +29,16 @@ class TestSession:
         assert session.state == SessionState.IDLE
         assert session.name == "worker-1"
         assert session.role == "worker"
-        assert session.sdk_session_id is None
+        assert session.native_session_id is None
 
     @staticmethod
     def test_reset():
         session = Session(name="test", role="worker")
         session.state = SessionState.FAILED
-        session.sdk_session_id = "old-id"
+        session.native_session_id = "old-id"
         session.reset()
         assert session.state == SessionState.IDLE
-        assert session.sdk_session_id is None
+        assert session.native_session_id is None
 
     @staticmethod
     def test_retry_fields_default_to_clean_state():
@@ -162,7 +162,7 @@ class TestSession:
         from workflow_controller.session.events import Event, EventType
 
         session = Session(name="test", role="worker")
-        session.sdk_session_id = "sdk-xyz"
+        session.native_session_id = "sdk-xyz"
         await session.pause()
 
         captured: dict = {}
@@ -579,7 +579,7 @@ class TestSession:
         from workflow_controller.session.events import Event, EventType
 
         session = Session(name="test", role="worker")
-        session.sdk_session_id = "sdk-abc"  # iteration 1 跑完写入
+        session.native_session_id = "sdk-abc"  # iteration 1 跑完写入
         captured: dict = {}
 
         class _FakeDriver:

@@ -82,7 +82,7 @@ def source_transcript_path(
 
 def detect_replay_runtime(
     *,
-    sdk_session_id: str,
+    native_session_id: str,
     cwd: str,
     configured_runtime: str | None,
     default_runtime: str,
@@ -90,9 +90,9 @@ def detect_replay_runtime(
 ) -> str:
     if configured_runtime:
         return configured_runtime
-    if sdk_session_id.startswith("ses_"):
+    if native_session_id.startswith("ses_"):
         return "opencode"
-    if source_transcript_path(sdk_session_id, cwd, source_config_dir).is_file():
+    if source_transcript_path(native_session_id, cwd, source_config_dir).is_file():
         return "claude_cli"
     # 无 transcript 命中的会话：可能是 transcript 被删/移走的 claude_cli 会话，也可能
     # 本就是继承全局默认 runtime 的会话（默认 claude_sdk，其 session id 同为 UUID 形态）。

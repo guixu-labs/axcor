@@ -80,7 +80,7 @@ def _make_opencode_db(xdg_root: Path, *, sessions, parts, messages=None) -> Path
 async def _origin_session(orch, cwd: Path, *, stop_reason: str | None = "reviewer_complete"):
     """建一个已结束的 origin worker 会话（sdk 会话 ses_orig_main）。"""
     origin = await orch.pool.create(SessionConfig(name="orig", role="worker", cwd=str(cwd)))
-    origin.sdk_session_id = "ses_orig_main"
+    origin.native_session_id = "ses_orig_main"
     origin.loop_status = "no"
     origin.stop_reason = stop_reason
     return origin
@@ -353,16 +353,16 @@ async def _claude_cli_origin(orch, tmp_path: Path, monkeypatch):
             runtime="claude_cli",
         )
     )
-    origin.sdk_session_id = "735b20da-1e5d-4a94-9ec9-f8f6670d20bf"
+    origin.native_session_id = "735b20da-1e5d-4a94-9ec9-f8f6670d20bf"
     origin.loop_status = "no"
     git_ref = await _seed_snapshot(orch, tmp_path)
     config_dir = tmp_path / "claude-config"
     transcript = (
-        config_dir / "projects" / _project_key(str(tmp_path)) / f"{origin.sdk_session_id}.jsonl"
+        config_dir / "projects" / _project_key(str(tmp_path)) / f"{origin.native_session_id}.jsonl"
     )
     transcript.parent.mkdir(parents=True)
     now = datetime.now(tz=UTC).astimezone()
-    rows = _claude_replay_rows(origin.sdk_session_id, str(tmp_path), now)
+    rows = _claude_replay_rows(origin.native_session_id, str(tmp_path), now)
     transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
     cp = _checkpoint_for(
@@ -394,11 +394,11 @@ async def test_claude_cli_replay_uses_private_jsonl_and_rejects_runtime_mismatch
         Path(fork.config.env_overrides["CLAUDE_CONFIG_DIR"])
         / "projects"
         / _project_key(result["fork_cwd"])
-        / f"{result['resume_sdk_session_id']}.jsonl"
+        / f"{result['resume_native_session_id']}.jsonl"
     )
     seeded = [json.loads(line) for line in target.read_text().splitlines()]
     assert len(seeded) == 1
-    assert seeded[0]["sessionId"] == result["resume_sdk_session_id"]
+    assert seeded[0]["sessionId"] == result["resume_native_session_id"]
     mismatch = await TracebackRunner(_get_plugin(orch)).run(
         origin.id,
         cp.checkpoint_id,
@@ -435,7 +435,7 @@ async def _replay_runner(
     if origin_loop is not None:
         cfg_kwargs["loop"] = origin_loop
     origin = await orch.pool.create(SessionConfig(**cfg_kwargs))
-    origin.sdk_session_id = "ses_orig_main"
+    origin.native_session_id = "ses_orig_main"
     origin.loop_status = "no"
     origin.stop_reason = "reviewer_complete"
     git_ref = await _seed_snapshot(orch, cwd)
@@ -535,11 +535,11 @@ class TestTracebackRunner:
     async def test_run_seeds_and_resumes(self, orch, tmp_path, monkeypatch):
         # The orchestrator's _activate_session is mocked, so no real opencode is
         # spawned — this tests the seed+resume wiring end to end.
-        # 1. origin session (done) with cwd + sdk_session_id
+        # 1. origin session (done) with cwd + native_session_id
         origin = await orch.pool.create(
             SessionConfig(name="orig", role="worker", cwd=str(tmp_path))
         )
-        origin.sdk_session_id = "ses_orig_main"
+        origin.native_session_id = "ses_orig_main"
         origin.loop_status = "no"
         origin.stop_reason = "reviewer_complete"
         # 2. take a snapshot at tmp_path → git_ref
@@ -569,8 +569,8 @@ class TestTracebackRunner:
         # cleanup + topology display.
         assert Path(new_bt["fork_root"]).is_dir()
         assert Path(new_bt["fork_cwd"]).is_dir()
-        # seed set the sdk_session_id to the seeded id; _resume_next True
-        assert new_session.sdk_session_id == result["resume_sdk_session_id"]
+        # seed set the native_session_id to the seeded id; _resume_next True
+        assert new_session.native_session_id == result["resume_native_session_id"]
         assert getattr(new_session, "_resume_next") is True
         # fork cwd has the restored spec.md
         fork_cwd = Path(result["fork_cwd"])
@@ -658,9 +658,9 @@ class TestTracebackRunner:
         result = await runner.run(origin.id, cp.checkpoint_id, runtime="opencode")
         assert result["ok"] is True
         # seed ran: resume id set
-        assert result["resume_sdk_session_id"]
+        assert result["resume_native_session_id"]
         new_session = orch.pool.get(result["session_id"])
-        assert new_session.sdk_session_id == result["resume_sdk_session_id"]
+        assert new_session.native_session_id == result["resume_native_session_id"]
         assert getattr(new_session, "_resume_next") is True
         prompt = new_session.config.initial_prompt or ""
         # transparency: the replay prompt must not leak replay/checkpoint/re-dispatch
@@ -741,7 +741,7 @@ class TestTracebackRunner:
         origin = await orch.pool.create(
             SessionConfig(name="orig", role="worker", cwd=str(tmp_path))
         )
-        origin.sdk_session_id = "ses_orig"
+        origin.native_session_id = "ses_orig"
         origin.loop_status = "yes"
         origin.state = origin.state.RUNNING  # type: ignore[assignment]
         cp = _checkpoint_for(
@@ -766,7 +766,7 @@ class TestTracebackRunner:
         origin = await orch.pool.create(
             SessionConfig(name="orig", role="worker", cwd=str(tmp_path))
         )
-        origin.sdk_session_id = "ses_orig"
+        origin.native_session_id = "ses_orig"
         origin.loop_status = "no"
         cp = _checkpoint_for(
             origin,
@@ -785,11 +785,11 @@ class TestTracebackRunner:
         assert result["ok"] is False
         assert "git_ref" in result["error"]
 
-    async def test_run_rejects_no_sdk_session_id(self, orch, tmp_path):
+    async def test_run_rejects_no_native_session_id(self, orch, tmp_path):
         origin = await orch.pool.create(
             SessionConfig(name="orig", role="worker", cwd=str(tmp_path))
         )
-        origin.sdk_session_id = None  # not an opencode session
+        origin.native_session_id = None  # not an opencode session
         origin.loop_status = "no"
         git_ref = await _seed_snapshot(orch, tmp_path)
         cp = _checkpoint_for(origin, git_ref, iteration=1, agent_id="a", agent_type="t")
@@ -797,7 +797,7 @@ class TestTracebackRunner:
         runner = TracebackRunner(_get_plugin(orch))
         result = await runner.run(origin.id, cp.checkpoint_id)
         assert result["ok"] is False
-        assert "sdk_session_id" in result["error"]
+        assert "native_session_id" in result["error"]
 
     async def test_run_uses_transparent_continue_prompt(self, orch, tmp_path, monkeypatch):
         # 透明重放（设计 §0 原则 5/6 + §6 验证清单 1）：首轮 prompt 必须是通用
@@ -890,7 +890,7 @@ class TestTracebackRunner:
         con = _sq.connect(str(fork_db))
         sids = {r[0] for r in con.execute("SELECT id FROM session").fetchall()}
         con.close()
-        assert sids == {result["resume_sdk_session_id"]}
+        assert sids == {result["resume_native_session_id"]}
         assert "ses_orig_main" not in sids
         # fork_cwd parent only has cwd/ (no sibling workflow-controller-tb-*)
         siblings = [p.name for p in fork_cwd.parent.iterdir() if p.name != ".DS_Store"]
@@ -939,7 +939,7 @@ class TestTracebackRunner:
         con = sqlite3.connect(str(fork_db))
         rows = con.execute(
             "SELECT data FROM part WHERE session_id = ? ORDER BY time_created ASC",
-            (result["resume_sdk_session_id"],),
+            (result["resume_native_session_id"],),
         ).fetchall()
         con.close()
         # Only p1 — "I'll call X" (p2) and task part (p3) and p4 all dropped
@@ -969,7 +969,7 @@ class TestTracebackRunner:
         assert r1["ok"] is True
         fork1 = orch.pool.get(r1["session_id"])
         fork1_cwd = Path(r1["fork_cwd"])
-        fork1.sdk_session_id = r1["resume_sdk_session_id"]
+        fork1.native_session_id = r1["resume_native_session_id"]
         fork1.loop_status = "no"
         fork1.stop_reason = "reviewer_complete"
         # Verify _resolve_origin_env(fork1_cwd) now returns the fork env (nested replay
@@ -979,7 +979,7 @@ class TestTracebackRunner:
         }
 
         # Prepare fork1 as a replayable origin: snapshot + ses_sub_y stream + cp2.
-        cp2 = await _prepare_nested_replay(orch, fork1, fork1_cwd, r1["resume_sdk_session_id"])
+        cp2 = await _prepare_nested_replay(orch, fork1, fork1_cwd, r1["resume_native_session_id"])
 
         # ── Replay #2: from fork1's cp2 → fork2 (nested replay) ──
         r2 = await runner.run(fork1.id, cp2.checkpoint_id, runtime="opencode")
@@ -999,7 +999,7 @@ class TestTracebackRunner:
         con2 = sqlite3.connect(str(fork2_db))
         sids2 = {r[0] for r in con2.execute("SELECT id FROM session").fetchall()}
         con2.close()
-        assert sids2 == {r2["resume_sdk_session_id"]}
+        assert sids2 == {r2["resume_native_session_id"]}
         # birth_traceback：fork2 的 origin 仍是根 origin（2 层约束），不挂 fork1。
         bt2 = (fork2.plugin_metadata or {}).get("agent_traceback", {}).get("birth_traceback")
         assert bt2["origin_session_id"] == origin.id

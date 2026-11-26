@@ -54,7 +54,7 @@ def _worker_session(name="worker-1", cwd="/tmp/test-handoff", sid=None):
     )
     s = Session(name=name, role="worker", config=cfg)
     s.id = sid
-    s.sdk_session_id = "sdk-" + uuid.uuid4().hex[:8]
+    s.native_session_id = "sdk-" + uuid.uuid4().hex[:8]
     return s
 
 
@@ -781,7 +781,7 @@ class TestInjectPrompt:
         """resume 无文本框输入 → "请继续你之前的工作。"。"""
         cfg = SessionConfig(name="test-worker", initial_prompt="测试", cwd="/tmp")
         session = Session(session_id="resume2", config=cfg)
-        session.sdk_session_id = "resume2-native"
+        session.native_session_id = "resume2-native"
         session.state = SessionState.IDLE
 
         asyncio.run(session.resume())
@@ -794,7 +794,7 @@ class TestInjectPrompt:
         """resume 有文本框输入 → 用输入文本。"""
         cfg = SessionConfig(name="test-worker", initial_prompt="测试", cwd="/tmp")
         session = Session(session_id="resume3", config=cfg)
-        session.sdk_session_id = "resume3-native"
+        session.native_session_id = "resume3-native"
         session.state = SessionState.IDLE
 
         asyncio.run(session.inject_prompt("告诉我是期几"))

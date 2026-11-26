@@ -379,7 +379,7 @@ class TestImportSession:
         cannbot_db, source_db, target_cwd = _import_inputs(tmp_path, framework="claude-code-proxy")
         _orch, result = _run_import(tmp_path, source_db, cannbot_db, target_cwd)
         assert result["ok"], f"import failed: {result.get('error')}"
-        assert result["sdk_session_id"] == "ses_main_001"
+        assert result["native_session_id"] == "ses_main_001"
 
     @staticmethod
     def test_reconstructed_session_id_logged_in_metadata(tmp_path: Path):
@@ -392,11 +392,11 @@ class TestImportSession:
         sess = orch.pool.created[0]
         bt = sess.plugin_metadata.get("agent_traceback", {}).get("birth_traceback", {})
         assert bt.get("reconstructed_from") == str(cannbot_db)
-        assert bt.get("origin_sdk_session_id") == "ses_main_001"
+        assert bt.get("origin_native_session_id") == "ses_main_001"
         assert bt.get("fork_cwd") == str(target_cwd.resolve())
         assert bt.get("checkpoints") == 2
-        # session.sdk_session_id 设为原 sdk id（让 TracebackRunner 能查 opencode.db）
-        assert sess.sdk_session_id == "ses_main_001"
+        # session.native_session_id 设为原 sdk id（让 TracebackRunner 能查 opencode.db）
+        assert sess.native_session_id == "ses_main_001"
         # loop_status="yes"（已跑完态，不进运行队列）
         assert sess.loop_status == "yes"
 

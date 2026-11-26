@@ -15,7 +15,7 @@
 """会话转录源定位：按 runtime 解析源会话的转录落点。
 
 claude 系 runtime 为原生 jsonl（~/.claude/projects/<cwd 编码>/
-<sdk_session_id>.jsonl），codex 为 workspace rollout，opencode 为
+<native_session_id>.jsonl），codex 为 workspace rollout，opencode 为
 opencode.db（定位优先级见 find_opencode_db）。
 """
 
@@ -266,7 +266,7 @@ def _find_codex_rollout(session_id: str, cwd: str) -> Path:
 
 
 def resolve_transcript_source(
-    sdk_session_id: str | None,
+    native_session_id: str | None,
     *,
     runtime: str,
     cwd: str = ".",
@@ -278,19 +278,19 @@ def resolve_transcript_source(
     claude 系空 cwd 抛 ValueError：转录落点按 cwd 编码，"." 默认值只会
     拼出错误路径的误导性 file-not-found。
     """
-    if not sdk_session_id:
+    if not native_session_id:
         return None
     if runtime in _CLAUDE_RUNTIMES:
         if not cwd:
             raise ValueError("Session has no cwd")
         path = resolve_claude_session_path(
-            sdk_session_id,
+            native_session_id,
             cwd,
             env,
             scan_user_homes=scan_user_homes,
         )
         if path is None:
-            if not _is_safe_session_id(sdk_session_id):
+            if not _is_safe_session_id(native_session_id):
                 return None
             path = (
                 claude_config_dirs(
@@ -299,7 +299,7 @@ def resolve_transcript_source(
                 )[0]
                 / "projects"
                 / claude_project_key(cwd)
-                / f"{sdk_session_id}.jsonl"
+                / f"{native_session_id}.jsonl"
             )
         return TranscriptSource("claude-code", "claude-jsonl", path)
     if runtime == "opencode":
@@ -310,7 +310,7 @@ def resolve_transcript_source(
         return TranscriptSource(
             "codex",
             "codex-jsonl",
-            _find_codex_rollout(sdk_session_id, cwd),
+            _find_codex_rollout(native_session_id, cwd),
         )
     return None
 
@@ -329,7 +329,7 @@ def resolve_roster_source(
     if not isinstance(cfg, dict):
         cfg = {}
     return resolve_transcript_source(
-        roster_row.get("sdk_session_id"),
+        roster_row.get("native_session_id"),
         runtime=str(cfg.get("runtime") or default_runtime),
         cwd=str(cfg.get("cwd") or "."),
         env=cfg.get("env_overrides") or None,

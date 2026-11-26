@@ -153,12 +153,12 @@ def _limit_rotation_args(event: Event) -> tuple[str, datetime | None, str]:
 
 def _preset_resume_session(
     session: Session,
-    resume_sdk_session_id: str | None,
+    resume_native_session_id: str | None,
     initial_current_iteration: int | None,
 ) -> None:
     """激活前预设 resume 位与迭代计数（首轮 query 恢复种子会话）。"""
-    if resume_sdk_session_id:
-        session.sdk_session_id = resume_sdk_session_id
+    if resume_native_session_id:
+        session.native_session_id = resume_native_session_id
         session.mark_resume_next()
     if initial_current_iteration is not None:
         # Transparent replay: align iteration counter with origin's checkpoint
@@ -387,7 +387,7 @@ def _build_session_auto_event(
     session_id: str,
     action: str,
     config: SessionConfig,
-    resume_sdk_session_id: str,
+    resume_native_session_id: str,
 ) -> Event:
     return Event.create(
         session_id=session_id,
@@ -397,7 +397,7 @@ def _build_session_auto_event(
             "action": action,
             "name": config.name,
             "role": config.role,
-            "resume_sdk_session_id": resume_sdk_session_id,
+            "resume_native_session_id": resume_native_session_id,
         },
     )
 
@@ -416,7 +416,7 @@ def _build_file_change_context(
         capture_id=uuid4().hex,
         actor_kind="agent",
         workflow_controller_session_id=session_id,
-        native_session_id=str(data.get("native_session_id") or "") or session.sdk_session_id,
+        native_session_id=str(data.get("native_session_id") or "") or session.native_session_id,
         parent_native_session_id=str(data.get("parent_session_id") or "") or None,
         runtime=session.config.runtime or config.runtime,
         model=session.config.model,

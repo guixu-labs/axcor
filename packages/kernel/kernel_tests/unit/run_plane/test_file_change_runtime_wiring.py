@@ -141,7 +141,7 @@ async def test_pre_tool_capture_stamps_run_dimension(tmp_path):
     from workflow_controller.core.session_run_affiliation import SessionRunAffiliation
 
     session = SimpleNamespace(
-        sdk_session_id="native-1",
+        native_session_id="native-1",
         current_prompt="working",
         config=SimpleNamespace(
             runtime=None,

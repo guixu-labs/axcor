@@ -102,7 +102,7 @@ POST /api/sessions/import-db {db_path, target_cwd}
   ↓   3. CheckpointDeriver.derive(...)
   ↓        → list[Checkpoint]（用临时 session_id 占位）
   ↓   4. pool.create(SessionConfig) → session（持久化到 events.db sessions 表）
-  ↓        ├─ session.sdk_session_id = sdk_session_id
+  ↓        ├─ session.native_session_id = native_session_id
   ↓        ├─ session.loop_status = "yes"（已跑完态，不进运行队列）
   ↓        ├─ session.plugin_metadata["agent_traceback"]["birth_traceback"] = {...}
   ↓        └─ event_router.store(Event(reconstructed_session_imported))
@@ -110,7 +110,7 @@ POST /api/sessions/import-db {db_path, target_cwd}
   ↓        → 守护进程库（event_router.db_path_for(session.id)）的 checkpoints 表
   ↓   6. _synthesize_historical_events → 合成 SUBAGENT/STEP_FINISH 事件供 Dashboard 展示（Phase 1.7 后；之前为 RESULT）
   ↓
-  返回 {ok, session_id, sdk_session_id, checkpoints[], fork_cwd, opencode_db_path}
+  返回 {ok, session_id, native_session_id, checkpoints[], fork_cwd, opencode_db_path}
 ```
 
 重建完成后，**重放复用 `TracebackRunner.run`，零改动**——这是「同构承诺」的直接收益。
@@ -390,7 +390,7 @@ base_config.env_overrides = dict(fork_env)
 ```python
 session = await orch.start_session_with_resume(
     config,
-    resume_sdk_session_id=resume_id,                       # seeded 的 ses_tb_xxx
+    resume_native_session_id=resume_id,                       # seeded 的 ses_tb_xxx
     plugin_metadata={"agent_traceback": {"birth_traceback": birth}},
     start_action="traceback_session_started",
     inherit_overlays_from=origin_session_id,                # 继承 origin 的 subagent hints + 全局指令
@@ -515,7 +515,7 @@ git commit hash 保真（`file_state_rebuilder.py:255-290`）：git commit 的 h
 
 #### 4.8.4 `checkpoint_deriver.py` — 检查点推导
 
-`CheckpointDeriver.derive`（`checkpoint_deriver.py:49-146`）输入：`timeline` / `file_states`（重放产出的 `CheckpointFileState` 列表，含 git_ref）/ `task_part_ids`（转写器产出的 `{subagent_sdk_id → main_task_part_id}`）/ `session_id` / `sdk_session_id` / `bridges`。
+`CheckpointDeriver.derive`（`checkpoint_deriver.py:49-146`）输入：`timeline` / `file_states`（重放产出的 `CheckpointFileState` 列表，含 git_ref）/ `task_part_ids`（转写器产出的 `{subagent_sdk_id → main_task_part_id}`）/ `session_id` / `native_session_id` / `bridges`。
 
 按 `file_states` 里 `trigger=subagent_start` 的 `checkpoint_index` 顺序遍历，每条构造一个 `Checkpoint` 行；末尾追加 `trigger=session_complete` 终态检查点。**关键回退**（`checkpoint_deriver.py:90-98`）：若 timeline 主 task 边界数 ≠ file_states 的 subagent_start 数（重放与转写偶尔对不齐），**以 file_states 为准**（重放才是真相）+ warning——避免 git_ref 错配。
 

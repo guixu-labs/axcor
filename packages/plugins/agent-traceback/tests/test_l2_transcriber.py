@@ -63,7 +63,7 @@ def _transcriber_at(
 
 
 def _meta(
-    sdk_session_id: str,
+    native_session_id: str,
     *,
     initial_prompt: str = "",
     origin_cwd: str = "/workspace/orig",
@@ -73,7 +73,7 @@ def _meta(
 ) -> SessionMeta:
     """本文件的 SessionMeta 快捷构造（source_path 始终为空）。"""
     return SessionMeta(
-        sdk_session_id=sdk_session_id,
+        native_session_id=native_session_id,
         initial_prompt=initial_prompt,
         origin_cwd=origin_cwd,
         model=model,
@@ -338,17 +338,17 @@ class TestTranscribe:
                 origin_cwd=meta.origin_cwd,
                 source_opencode_db=host_db,
             )
-            result = transcriber.transcribe(tl, meta, meta.sdk_session_id, bridges)
+            result = transcriber.transcribe(tl, meta, meta.native_session_id, bridges)
             # 用 read_main_session_parts 读回
             env = {"XDG_DATA_HOME": str(target_cwd / ".workflow-controller")}
-            parts = read_main_session_parts(meta.sdk_session_id, env)
+            parts = read_main_session_parts(meta.native_session_id, env)
             assert len(parts) > 0
             # 找一个 task part 验证 find_main_part_id_for_subagent 能定位
             # 从 bridge 取一个子 session id
             assert bridges
             sub_sid = str(bridges[0].get("subagentSessionId") or "")
             assert sub_sid
-            task_pid = find_main_part_id_for_subagent(meta.sdk_session_id, sub_sid, env)
+            task_pid = find_main_part_id_for_subagent(meta.native_session_id, sub_sid, env)
             assert task_pid is not None
             # 与转写器记录的 task_part_ids 对比
             assert sub_sid in result.task_part_ids

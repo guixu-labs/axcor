@@ -228,7 +228,7 @@ Stop 链路固定为：
 
 ### Insight 导入
 
-- `resolve_transcript_source()` 为 `codex_cli` 返回 `kind="codex-jsonl"`：在既有安全校验下扫描 `<cwd>/.codex/sessions/**`，用首行 `session_meta.payload.id` 匹配 `sdk_session_id`，排除 subagent rollout；多分片时取最新主线程文件，候选并发消失时跳过，缺失时明确报错。
+- `resolve_transcript_source()` 为 `codex_cli` 返回 `kind="codex-jsonl"`：在既有安全校验下扫描 `<cwd>/.codex/sessions/**`，用首行 `session_meta.payload.id` 匹配 `native_session_id`，排除 subagent rollout；多分片时取最新主线程文件，候选并发消失时跳过，缺失时明确报错。
 - 配置 `cpx` 的 Codex 会话在 Insight 导入时优先读取 `~/.context-insight/proxy/cpx-<session_id>.jsonl`（cpx 的实际捕获落点；`CANNBOT_PROXY_DIR` 显式配置仍最高，`~/.cannbot-insight/proxy/` 仅作为存量 fallback）。压缩捕获仅支持 Insight 导入。捕获缺失时不回退原生 rollout，返回错误「Codex cpx 捕获文件不存在（未回退原生 rollout）: <session_id>」。cpx 捕获的 `meta.json` 标记 `framework="claude-code"`，JSONL 首行为 `{"type":"user","message":...}` 的 Claude JSONL 方言；导入服务因此透传 `source="claude-jsonl"`。未启用 cpx 的会话仍使用 `resolve_transcript_source()` 的原生 rollout，现有导入服务向 Insight 透传 `source="codex-jsonl"`、`sessionId` 与 `filePath`，详情页 URL 使用源会话 `taskId`（即 Codex thread id），而非 Insight 数据库内部行 id。Run 导出不受 cpx 影响，继续复用原生 rollout 定位结果：rollout 存在时按 JSONL 文件复制，缺失时按会话成员降级为 `location=null/missing`，不影响整个 run 导出。CANNBay exporter 暂不支持 Codex，上传继续显式拒绝。
 
 ## 7. 实施顺序

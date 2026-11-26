@@ -71,12 +71,12 @@ class CheckpointDeriver:
         file_states: list[CheckpointFileState],
         task_part_ids: dict[str, str],
         session_id: str,
-        sdk_session_id: str,
+        native_session_id: str,
         bridges: list[dict[str, Any]] | None = None,
     ) -> list[Checkpoint]:
         """推导检查点列表。
 
-        ``session_id`` 是 Workflow Controller 内部 session id；``sdk_session_id`` 是
+        ``session_id`` 是 Workflow Controller 内部 session id；``native_session_id`` 是
         opencode 的 ``ses_xxx``，用于 checkpoint_id 前缀。``bridges`` 查 subagent_type。
         """
         # 子 session id → subagent_type（从 InteractionBridge 查）
@@ -86,14 +86,14 @@ class CheckpointDeriver:
             file_states=file_states,
             task_part_ids=task_part_ids,
             session_id=session_id,
-            sdk_session_id=sdk_session_id,
+            native_session_id=native_session_id,
             sub_type_map=sub_type_map,
         )
         # 末尾 session_complete 检查点
         complete_cp = _derive_session_complete_checkpoint(
             file_states=file_states,
             session_id=session_id,
-            sdk_session_id=sdk_session_id,
+            native_session_id=native_session_id,
             parent_checkpoint_id=(checkpoints[-1].checkpoint_id if checkpoints else None),
         )
         if complete_cp is not None:
@@ -175,7 +175,7 @@ def _derive_subagent_checkpoints(
     file_states: list[CheckpointFileState],
     task_part_ids: dict[str, str],
     session_id: str,
-    sdk_session_id: str,
+    native_session_id: str,
     sub_type_map: dict[str, str],
 ) -> list[Checkpoint]:
     """按 subagent_start 的 file_states 逐个构造检查点。"""
@@ -208,7 +208,7 @@ def _derive_subagent_checkpoints(
         agent_type = sub_type_map.get(sub_sid) or (boundary.agent_type if boundary else "")
         iteration = boundary.iteration if boundary else (i + 1)
         cp = _build_checkpoint(
-            checkpoint_id=f"cp_rc_{sdk_session_id[:8]}_{cp_idx:03d}",
+            checkpoint_id=f"cp_rc_{native_session_id[:8]}_{cp_idx:03d}",
             session_id=session_id,
             iteration=iteration,
             agent_id=sub_sid,
@@ -226,7 +226,7 @@ def _derive_subagent_checkpoints(
 def _derive_session_complete_checkpoint(
     file_states: list[CheckpointFileState],
     session_id: str,
-    sdk_session_id: str,
+    native_session_id: str,
     parent_checkpoint_id: str | None,
 ) -> Checkpoint | None:
     """构造末尾 session_complete 终态检查点；无终态 file_state 时返回 None。"""
@@ -238,7 +238,7 @@ def _derive_session_complete_checkpoint(
         return None
     cp_idx = complete_fs.checkpoint_index
     return _build_checkpoint(
-        checkpoint_id=f"cp_rc_{sdk_session_id[:8]}_{cp_idx:03d}",
+        checkpoint_id=f"cp_rc_{native_session_id[:8]}_{cp_idx:03d}",
         session_id=session_id,
         iteration=complete_fs.checkpoint_index,
         agent_id="",  # 终态无 subagent

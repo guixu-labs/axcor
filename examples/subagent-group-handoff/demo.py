@@ -260,7 +260,7 @@ def _check_successor_outcome(
     """校验 successor 会话身份、交付文件与 worker 会话数。"""
     result = art.result
     _check(result["successor_native_id"] == "demo-native-successor", "successor 原生会话 id 不符")
-    _check(successor.sdk_session_id == "demo-native-successor", "successor SDK 会话 id 不符")
+    _check(successor.native_session_id == "demo-native-successor", "successor SDK 会话 id 不符")
     _check(
         set(result["new_agents"]) == {f"new-{kind}" for kind in AGENT_TYPES},
         "结果 new_agents 集合不符",

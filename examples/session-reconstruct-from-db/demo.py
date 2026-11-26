@@ -212,7 +212,7 @@ async def _run_phase1(app, cannbot_db: Path, project_dir: Path):
         },
     )
     recon_sid = imp.get("session_id", "")
-    recon_sdk = imp.get("sdk_session_id", "")
+    recon_sdk = imp.get("native_session_id", "")
     cps = imp.get("checkpoints", [])
     p1 = (
         imp.get("ok") is True
@@ -364,11 +364,11 @@ def _check_birth_traceback(orch, recon_sid: str, cannbot_db: Path) -> bool:
     )
     bt_ok = (
         recon_session is not None
-        and recon_session.sdk_session_id == ORIGIN_SDK
+        and recon_session.native_session_id == ORIGIN_SDK
         and recon_session.loop_status == "yes"
         and bt is not None
         and bt.get("reconstructed_from") == str(cannbot_db)
-        and bt.get("origin_sdk_session_id") == ORIGIN_SDK
+        and bt.get("origin_native_session_id") == ORIGIN_SDK
         and bt.get("checkpoints") == 4
     )
     logger.info(
@@ -421,7 +421,7 @@ def _verify_phase3(
     return (
         tb.get("ok") is True
         and tb.get("session_id")
-        and tb.get("resume_sdk_session_id")
+        and tb.get("resume_native_session_id")
         and fork is not None
         and fork_cwd is not None
         and (fork_cwd / "design.md").read_text() == DESIGN_MD  # 文件态恢复
@@ -438,7 +438,7 @@ def _log_phase3(tb: dict, fork_cwd: Path | None, _is_continue: bool, _no_leak: b
     """打印 Phase 3 结果。"""
     logger.info(
         f"  POST /traceback → fork={tb.get('session_id', '')[:12]}"
-        f" resume={tb.get('resume_sdk_session_id', '')[:12]}"
+        f" resume={tb.get('resume_native_session_id', '')[:12]}"
     )
     logger.info(
         f"  恢复 design.md / impl.py 不在 (developer 还没跑): "

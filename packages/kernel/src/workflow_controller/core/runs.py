@@ -59,7 +59,7 @@ from workflow_controller.store.event_store import (
     IDX_EVENTS_SESSION_DDL,
     IDX_RUN_EVENTS_DDL,
     RUN_EVENTS_DDL,
-    SESSIONS_DDL,
+    ensure_sessions_table,
 )
 
 if TYPE_CHECKING:
@@ -343,7 +343,7 @@ class RunStore:
         # uuid 幂等列是 events v2 形状的特征列；表可缺（账面先建时本档内补）
         events_ok = "uuid" in _table_columns(conn, "events")
         # sessions 表由本档迁移一并铺（mint 与 sessions 表写入同事务的表前提）
-        roster_ok = bool(_table_columns(conn, "sessions"))
+        roster_ok = "native_session_id" in _table_columns(conn, "sessions")
         tables = {
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
@@ -667,7 +667,7 @@ class RunStore:
             conn.execute(IDX_EVENTS_RUN_DDL)
             conn.execute(RUN_EVENTS_DDL)
             conn.execute(IDX_RUN_EVENTS_DDL)
-            conn.execute(SESSIONS_DDL)
+            ensure_sessions_table(conn)
             conn.execute(RUN_DRIVER_STATE_DDL)
             # v4：旧档库补终态投影列（表可缺——本档内建）
             if "projection" not in _table_columns(conn, "run_driver_state"):

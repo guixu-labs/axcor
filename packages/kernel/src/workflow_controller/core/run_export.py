@@ -519,8 +519,8 @@ class RunExportService:
             if m.native_session_id:
                 native_of[m.session_id] = m.native_session_id
         for sid, row in request.roster.items():
-            if row.get("sdk_session_id"):
-                native_of[sid] = row["sdk_session_id"]
+            if row.get("native_session_id"):
+                native_of[sid] = row["native_session_id"]
         native_roster = {
             native_of[sid]: row for sid, row in request.roster.items() if sid in native_of
         }

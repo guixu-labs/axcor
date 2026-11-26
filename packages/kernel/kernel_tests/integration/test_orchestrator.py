@@ -228,7 +228,7 @@ class TestOrchestrator:
         await orchestrator.shutdown()
 
     async def test_register_session_captures_task_started(self, orchestrator):
-        """sdk 路径的 TaskStartedMessage（subtype=task_started）也要存 sdk_session_id，
+        """sdk 路径的 TaskStartedMessage（subtype=task_started）也要存 native_session_id，
         否则 claude_sdk 永远拿不到 id，resume 无 id 可用。
         """
         from workflow_controller.session.events import Event, EventType
@@ -244,7 +244,7 @@ class TestOrchestrator:
             data={"type": "system", "subtype": "task_started", "session_id": "sdk-xyz"},
         )
         await getattr(orchestrator, "_register_session")(event)
-        assert session.sdk_session_id == "sdk-xyz"
+        assert session.native_session_id == "sdk-xyz"
         await orchestrator.shutdown()
 
     async def test_register_evaluator(self, orchestrator):

@@ -965,7 +965,7 @@ def _parse_system(data: dict[str, Any], session_id: str, iteration: int) -> Even
 
     # CLI stdout `type=system` 行按 subtype 分流：
     # - subtype=init（带 session_id 的起始消息）→ ITERATION_START（resume 前置，
-    #   _register_session observe 此类型存 sdk_session_id）
+    #   _register_session observe 此类型存 native_session_id）
     # - 其余（thinking_tokens 等纯展示性 system 消息）→ NOTIFICATION 拋余桶
     subtype = data.get("subtype", "")
     if subtype == "init" and data.get("session_id"):

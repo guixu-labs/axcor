@@ -153,7 +153,7 @@ class ContextTracker:
 
     async def _check_from_command(self) -> ContextResult:
         unknown = ContextResult(0, 0, None, "context_command")
-        if not self.session.sdk_session_id:
+        if not self.session.native_session_id:
             return unknown
 
         if self.driver_factory is None:
@@ -186,7 +186,7 @@ class ContextTracker:
                 config.runtime,
                 permission_mode="bypassPermissions",
                 cli_wrapper=config.cli_wrapper,
-                resume=self.session.sdk_session_id,
+                resume=self.session.native_session_id,
                 fork_session=True,
             )
             async with asyncio.timeout(15):

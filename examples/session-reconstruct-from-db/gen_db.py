@@ -547,7 +547,7 @@ def main() -> int:
     out = Path(args.output)
     build_cannbot_db(out)
     logger.info(f"✓ 生成 cannbot session db: {out}")
-    logger.info(f"  sdk_session_id : {ORIGIN_SDK}")
+    logger.info(f"  native_session_id : {ORIGIN_SDK}")
     logger.info(
         f"  subagents      : {S1} ({DESIGNER_TYPE}), {S2} ({DEVELOPER_TYPE}), {S3} ({TESTER_TYPE})"
     )

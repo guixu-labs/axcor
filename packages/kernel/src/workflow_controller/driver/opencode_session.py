@@ -105,11 +105,11 @@ def read_subagent_type(
 
 
 def read_opencode_session_title(
-    sdk_session_id: str,
+    native_session_id: str,
     env: dict[str, str] | None = None,
 ) -> str | None:
     """Read the title of an opencode session. Best-effort; never raises."""
-    if not sdk_session_id:
+    if not native_session_id:
         return None
     path = opencode_db_path(env)
     if not path.is_file():
@@ -120,7 +120,7 @@ def read_opencode_session_title(
     try:
         row = con.execute(
             "SELECT title FROM session WHERE id = ?",
-            (sdk_session_id,),
+            (native_session_id,),
         ).fetchone()
     except sqlite3.Error:
         return None
@@ -130,12 +130,12 @@ def read_opencode_session_title(
 
 
 def update_opencode_session_title(
-    sdk_session_id: str,
+    native_session_id: str,
     title: str,
     env: dict[str, str] | None = None,
 ) -> bool:
     """Update the title of an opencode session. Best-effort; never raises."""
-    if not sdk_session_id or not title:
+    if not native_session_id or not title:
         return False
     path = opencode_db_path(env)
     if not path.is_file():
@@ -147,7 +147,7 @@ def update_opencode_session_title(
     try:
         con.execute(
             "UPDATE session SET title = ? WHERE id = ?",
-            (title, sdk_session_id),
+            (title, native_session_id),
         )
         con.commit()
         return True

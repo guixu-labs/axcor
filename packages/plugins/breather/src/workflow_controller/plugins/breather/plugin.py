@@ -738,7 +738,7 @@ class BreatherPlugin(Plugin):
         if session is not None:
             return session
         return next(
-            (s for s in services.list_sessions() if s.sdk_session_id == sdk_id),
+            (s for s in services.list_sessions() if s.native_session_id == sdk_id),
             None,
         )
 
@@ -757,7 +757,7 @@ class BreatherPlugin(Plugin):
         logger.info(
             "breather: ouro_id=%s sdk_id=%s context=%d/%d (%s), threshold=%.0f%%, method=%s",
             session.id,
-            session.sdk_session_id,
+            session.native_session_id,
             result.current_tokens,
             result.max_tokens,
             f"{result.percentage:.1f}%" if result.percentage is not None else "unknown",
@@ -1077,7 +1077,7 @@ class BreatherPlugin(Plugin):
             "breather: handoff pending for %s (sdk=%s, started_at=%.0f), "
             "waiting for stop hook to capture final_text",
             session.name,
-            session.sdk_session_id,
+            session.native_session_id,
             self._pending_handoff_started_at,
         )
         return {
@@ -1188,14 +1188,14 @@ class BreatherPlugin(Plugin):
     async def _update_session_title(
         self, session: Any, expected_name: str, timeout: float = 30.0
     ) -> None:
-        """轮询 sdk_session_id 后经 driver 改 session 标题（装饰性，失败仅告警）。"""
+        """轮询 native_session_id 后经 driver 改 session 标题（装饰性，失败仅告警）。"""
         start_time = time.time()
-        while not session.sdk_session_id and (time.time() - start_time) < timeout:
+        while not session.native_session_id and (time.time() - start_time) < timeout:
             await asyncio.sleep(0.5)
 
-        if not session.sdk_session_id:
+        if not session.native_session_id:
             logger.warning(
-                "Session %s has no sdk_session_id after %.1fs, skipping title update",
+                "Session %s has no native_session_id after %.1fs, skipping title update",
                 session.id,
                 timeout,
             )
@@ -1207,7 +1207,7 @@ class BreatherPlugin(Plugin):
         runtime = getattr(getattr(session, "config", None), "runtime", None)
         try:
             driver = self._services.create_driver(runtime)
-            renamed = driver.update_session_title(session.sdk_session_id, expected_name)
+            renamed = driver.update_session_title(session.native_session_id, expected_name)
         except Exception:
             logger.warning("update_session_title failed for %s", session.id, exc_info=True)
             return
@@ -1215,7 +1215,7 @@ class BreatherPlugin(Plugin):
             logger.info("Updated session title for %s to '%s'", session.id, expected_name)
         else:
             logger.warning(
-                "Failed to update title for %s (sdk_id=%s)", session.id, session.sdk_session_id
+                "Failed to update title for %s (sdk_id=%s)", session.id, session.native_session_id
             )
 
     def _find_initial_session(self, session: Any) -> Any | None:

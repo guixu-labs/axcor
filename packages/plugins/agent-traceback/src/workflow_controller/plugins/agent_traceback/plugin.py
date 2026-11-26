@@ -291,7 +291,7 @@ class AgentTracebackPlugin(Plugin):
         session = self._services.find_session(session_id)
         if session is not None:
             config = session.config
-            sdk_session_id = session.sdk_session_id or ""
+            native_session_id = session.native_session_id or ""
             cwd = config.cwd
             runtime = config.runtime
             config_dir = (config.env_overrides or {}).get("CLAUDE_CONFIG_DIR")
@@ -303,13 +303,13 @@ class AgentTracebackPlugin(Plugin):
                 config = json.loads(row.get("config_json") or "{}")
             except (TypeError, ValueError):
                 config = {}
-            sdk_session_id = row.get("sdk_session_id") or ""
+            native_session_id = row.get("native_session_id") or ""
             cwd = config.get("cwd") or ""
             runtime = config.get("runtime")
             config_dir = (config.get("env_overrides") or {}).get("CLAUDE_CONFIG_DIR")
         return await asyncio.to_thread(
             detect_replay_runtime,
-            sdk_session_id=sdk_session_id,
+            native_session_id=native_session_id,
             cwd=cwd,
             configured_runtime=runtime,
             default_runtime=self._services.default_runtime() or "claude_sdk",

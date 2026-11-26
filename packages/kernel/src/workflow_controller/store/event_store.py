@@ -81,7 +81,7 @@ SESSIONS_DDL = """
         stop_reason TEXT,
         loop_hold TEXT,
         config_json TEXT NOT NULL,
-        sdk_session_id TEXT,
+        native_session_id TEXT,
         created_at TEXT NOT NULL,
         last_activity TEXT NOT NULL,
         current_iteration INTEGER DEFAULT 0,
@@ -101,6 +101,13 @@ _EVENT_COLS = "uuid, run_id, context, session_id, iteration, timestamp, event_ty
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def ensure_sessions_table(conn: sqlite3.Connection) -> None:
+    """初始化会话列表，并在调用方的写事务内迁移旧列。"""
+    conn.execute(SESSIONS_DDL)
+    if "sdk_session_id" in _table_columns(conn, "sessions"):
+        conn.execute("ALTER TABLE sessions RENAME COLUMN sdk_session_id TO native_session_id")
 
 
 def _create_eval_tables(conn: sqlite3.Connection) -> None:
@@ -504,7 +511,7 @@ class EventStore:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT id, name, role, state, loop_status, stop_reason, loop_hold, "
-                "config_json, sdk_session_id, created_at, last_activity, "
+                "config_json, native_session_id, created_at, last_activity, "
                 "current_iteration, birth_handoff_doc, result, last_error, "
                 "plugin_metadata, final_loop_status, "
                 "last_stop_reason, retry_count FROM sessions ORDER BY created_at"
@@ -520,7 +527,7 @@ class EventStore:
                 "stop_reason": r["stop_reason"],
                 "loop_hold": r["loop_hold"],
                 "config_json": r["config_json"],
-                "sdk_session_id": r["sdk_session_id"],
+                "native_session_id": r["native_session_id"],
                 "created_at": r["created_at"],
                 "last_activity": r["last_activity"],
                 "current_iteration": r["current_iteration"],
@@ -649,7 +656,8 @@ class EventStore:
             conn.execute(RUN_EVENTS_DDL)
             conn.execute(IDX_RUN_EVENTS_DDL)
             _create_eval_tables(conn)
-            conn.execute(SESSIONS_DDL)
+            conn.execute("BEGIN IMMEDIATE")
+            ensure_sessions_table(conn)
             _create_handoff_tables(conn)
             # 旧 graph 插件的遗留表：零存量无导出义务，建库时幂等 DROP
             conn.execute("DROP TABLE IF EXISTS graphs")
@@ -862,7 +870,7 @@ class EventStore:
             "stop_reason": row["stop_reason"],
             "loop_hold": row["loop_hold"],
             "config_json": row["config_json"],
-            "sdk_session_id": row["sdk_session_id"],
+            "native_session_id": row["native_session_id"],
             "created_at": row["created_at"],
             "last_activity": row["last_activity"],
             "current_iteration": row["current_iteration"],

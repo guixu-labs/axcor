@@ -55,7 +55,7 @@ class SessionPool:
                 {**session.config.model_dump(), "active_seconds": session.active_seconds},
                 default=str,
             ),
-            "sdk_session_id": session.sdk_session_id,
+            "native_session_id": session.native_session_id,
             "created_at": session.created_at.isoformat(),
             "last_activity": session.last_activity.isoformat(),
             "current_iteration": session.current_iteration,
@@ -293,7 +293,7 @@ class SessionPool:
 def _apply_entry_fields(session: Session, entry: dict[str, Any], active_seconds: float) -> None:
     """entry 的运行态字段回填到 ghost session。"""
     session.active_seconds = active_seconds
-    session.sdk_session_id = entry.get("sdk_session_id")
+    session.native_session_id = entry.get("native_session_id")
     session.created_at = _parse_dt(entry.get("created_at"))
     session.last_activity = _parse_dt(entry.get("last_activity"))
     session.current_iteration = entry.get("current_iteration", 0)
@@ -306,7 +306,7 @@ def _apply_entry_fields(session: Session, entry: dict[str, Any], active_seconds:
     session.last_stop_reason = entry.get("last_stop_reason") or "user_stop"
     session.retry_count = entry.get("retry_count") or 0
     # 崩溃遗留的 running 没有存活 runtime；归一为可恢复断点，
-    # Run 驱动才能按原 sdk_session_id 续跑，而不会误生新成员。
+    # Run 驱动才能按原 native_session_id 续跑，而不会误生新成员。
     if (entry.get("state") or "").lower() == "running":
         session.loop_status = "no"
         session.stop_reason = "user_pause"

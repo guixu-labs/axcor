@@ -99,7 +99,7 @@ class Session:
         # 终态结局发射器：SO 在激活时安装；未安装（未激活/测试替身）时 no-op
         self._outcome_emitter: Callable[[Session, str], Awaitable[None]] | None = None
         self.config: SessionConfig = config or SessionConfig(name=name, role=role)
-        self.sdk_session_id: str | None = None
+        self.native_session_id: str | None = None
         self.created_at: datetime = datetime.now(tz=UTC)
         self.last_activity: datetime = datetime.now(tz=UTC)
 
@@ -117,7 +117,7 @@ class Session:
         self._manual_prompt_queue: asyncio.Queue[str] = asyncio.Queue()
         self.waiting_for_auto_reply_fallback = False
         self._stop_requested: bool = False
-        # resume() 后下次 query 用 sdk_session_id 续同一个 claude session
+        # resume() 后下次 query 用 native_session_id 续同一个 claude session
         # （区别于 play()：play 新起一个 claude session，不续上下文）。
         self._resume_next: bool = False
         # 首轮被中途取消且零事件（prompt 未进 sdk 会话）——恢复轮须重发
@@ -401,15 +401,15 @@ class Session:
         self._active_since = None
 
     async def resume(self) -> None:
-        """Resume after pause, continuing the SAME opencode session (sdk_session_id)
-        on the next query via --session. If sdk_session_id is not yet captured,
+        """Resume after pause, continuing the SAME opencode session (native_session_id)
+        on the next query via --session. If native_session_id is not yet captured,
         tries to recover it from opencode.db as a best-effort fallback; if still
         not found, the driver simply omits --session (fresh opencode session).
         """
-        if not self.sdk_session_id:
+        if not self.native_session_id:
             # 兜底恢复走线程：内含 subprocess（opencode db path，首调未缓存）
             # + 同步 sqlite 读，在 loop 上跑会停摆事件循环（定时器/信号迟到）
-            await asyncio.to_thread(self._recover_sdk_session_id)
+            await asyncio.to_thread(self._recover_native_session_id)
         self._resume_next = True
         self.pause_requested = False
         self.pause_event.set()
@@ -446,7 +446,7 @@ class Session:
         self.pause_requested = False
         self.pause_event.set()
         self._stop_requested = False
-        self.sdk_session_id = None
+        self.native_session_id = None
         self.retry_scheduled_at = None
         self.retry_count = 0
         self.loop_status = "yes"
@@ -499,8 +499,8 @@ class Session:
 
         # iteration 2+ 默认续同一 claude session（保留上下文，让 loop 多轮无缝 +
         # handoff 有累积前提）；iteration 1 冷启动；_resume_next（用户点 Resume）强制续。
-        should_resume = self._resume_next or (iteration > 1 and self.sdk_session_id is not None)
-        resume_id = self.sdk_session_id if should_resume else None
+        should_resume = self._resume_next or (iteration > 1 and self.native_session_id is not None)
+        resume_id = self.native_session_id if should_resume else None
         driver = create_driver(
             getattr(self.config, "runtime", None),
             cli_wrapper=getattr(self.config, "cli_wrapper", ""),
@@ -527,8 +527,8 @@ class Session:
             await self.emit_outcome("failed")
         return driver_error
 
-    def _recover_sdk_session_id(self) -> None:
-        """从 opencode.db 按 cwd + 创建时间兜底查 sdk_session_id。"""
+    def _recover_native_session_id(self) -> None:
+        """按 cwd 和创建时间从 opencode.db 恢复 native_session_id。"""
         import contextlib
         import sqlite3
 
@@ -547,12 +547,12 @@ class Session:
                     (cwd,),
                 ).fetchone()
                 if row:
-                    self.sdk_session_id = row[0]
+                    self.native_session_id = row[0]
                     # 启发式兜底：并行 agent 节点共享同一 work_dir 时，
                     # 「最近一条」未必对应当前 Workflow Controller session，可能 resume 到
                     # 错误 session。命中即告警，便于串台时排查。
                     logger.warning(
-                        "recovered sdk_session_id=%s for session %s via "
+                        "recovered native_session_id=%s for session %s via "
                         "cwd+time heuristic; may be ambiguous when multiple "
                         "opencode sessions share work_dir %s",
                         row[0],
@@ -560,7 +560,7 @@ class Session:
                         cwd,
                     )
         except Exception:
-            logger.debug("sdk_session_id 恢复探测失败（sqlite 读失败），保持现状")
+            logger.debug("native_session_id 恢复探测失败（sqlite 读失败），保持现状")
         # plugin_metadata 是溯源信息（birth_traceback 等），不属于运行态，reset 保留。
 
     async def _apply_resolved_provider(self) -> None:

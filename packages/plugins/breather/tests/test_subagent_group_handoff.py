@@ -124,7 +124,7 @@ def _group_handoff_parent_state_session(tmp_path, prior_handoffs=0):
         id="parent",
         name="worker",
         config=cfg,
-        sdk_session_id="native",
+        native_session_id="native",
         run_id=None,
         pause_requested=False,
         birth_handoff_doc="previous-handoff-doc" if prior_handoffs else None,
@@ -205,7 +205,7 @@ def _monitor_session(tmp_path, child_threshold=None):
         name="worker",
         pause_requested=False,
         config=SimpleNamespace(**cfg_kwargs),
-        sdk_session_id="native",
+        native_session_id="native",
         current_iteration=1,
     )
 
@@ -1247,7 +1247,7 @@ def test_monitor_at_100_pct_reports_without_handoff(tmp_path: Path) -> None:
             id="parent",
             pause_requested=False,
             config=SimpleNamespace(cwd=str(tmp_path), runtime="opencode", env_overrides={}),
-            sdk_session_id="native",
+            native_session_id="native",
             current_iteration=1,
         )
         emitted = []

@@ -77,7 +77,7 @@ def _split_model(model: str) -> tuple[str, str]:
 class TranscribeResult:
     """转写结果。``task_part_ids`` 供检查点推导预填 ``main_part_id``。"""
 
-    task_part_ids: dict[str, str]  # {subagent_sdk_session_id: main_task_part_id}
+    task_part_ids: dict[str, str]  # {subagent_native_session_id: main_task_part_id}
     opencode_db_path: Path
     message_count: int
     part_count: int
@@ -171,7 +171,7 @@ class L2Transcriber:
         self,
         timeline: list[TimelineEntry],
         session_meta: SessionMeta,
-        sdk_session_id: str,
+        native_session_id: str,
         bridges: list[dict[str, Any]] | None = None,
     ) -> TranscribeResult:
         """转写主 agent Turn+ToolCall → opencode.db。
@@ -191,7 +191,7 @@ class L2Transcriber:
         self._init_dest_db()
 
         # 构造 session/message/part 行
-        sid = sdk_session_id
+        sid = native_session_id
         session_row = self._build_session_row(session_meta, sid)
         main_turns, main_tcs_by_turn = _group_main_entries(timeline)
         messages, parts, task_part_ids = self._transcribe_main_turns(

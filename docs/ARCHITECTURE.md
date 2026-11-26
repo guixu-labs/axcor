@@ -362,14 +362,15 @@ class RunRecord:
   - `run_events (id, run_id, context, timestamp, event_type, data, created_at)` — run 键事件（bash 输出/驱动事件/状态迁移），按 run_id 归属
   - `evaluations (id, session_id, iteration, is_complete, progress, summary, feedback, artifacts, created_at)` — reviewer 每轮评估
   - `loop_results (id, session_id, iterations, status, error, final_evaluation_id, started_at, completed_at, created_at)` — 每次 loop 终态 + 最终评估引用
-  - `sessions (id, name, role, state, loop_status, stop_reason, loop_hold, config_json, sdk_session_id, created_at, last_activity, current_iteration, birth_handoff_doc, result, last_error, plugin_metadata, final_loop_status, successor_name, successor_id, last_stop_reason, retry_count)` — session 元数据快照（`_persist_session` 每次状态变更 UPSERT 一行）
+  - `sessions (id, name, role, state, loop_status, stop_reason, loop_hold, config_json, native_session_id, created_at, last_activity, current_iteration, birth_handoff_doc, result, last_error, plugin_metadata, final_loop_status, successor_name, successor_id, last_stop_reason, retry_count)` — session 元数据快照（`_persist_session` 每次状态变更 UPSERT 一行）
 - **增量查询**：cursor 是 events 表持久主键高水位的字符串形式。SSE 建连先
   `snapshot_event_cursor()` 取当前最大 id 形成快照，经 `get_recent_at_cursor` 回放快照前的
   最近事件；回放结束后用 `get_events_since_cursor` 执行 `id > cursor` 增量查询，并在每批
   响应后推进位置。游标不依赖事件 timestamp，因此即使提交顺序与事件时间不同，也不会漏读或跳跃。
 
 > **Session 元数据持久化（events.db sessions 表，单一来源）**：
-> - `SessionPool._persist_session`（经 `event_router.store_session`）每次状态变更（capture sdk_session_id / breather 设 result / stop/pause/resume）实时 UPSERT 一行到 events.db 的 sessions 表。SQLite WAL 模式下进程被 kill 也不丢（自动 checkpoint）。
+> - `native_session_id` 是运行时分配的会话 ID，用于续跑和定位转录。EventStore 和 RunStore 初始化时会在事务内将旧 `sessions.sdk_session_id` 列原地改名，保留已有 ID。Session API 和新写入的事件及插件元数据使用新字段名，历史事件保留原始 payload。
+> - `SessionPool._persist_session`（经 `event_router.store_session`）每次状态变更（capture native_session_id / breather 设 result / stop/pause/resume）实时 UPSERT 一行到 events.db 的 sessions 表。SQLite WAL 模式下进程被 kill 也不丢（自动 checkpoint）。
 > - 重启时 `load_sessions()` 扫描守护进程库的 sessions 表，还原 ghost session 到内存 pool。
 >
 > **注入关系**：`EventStoreRouter` 构造早于 `SessionPool`（router 需要 config，pool 还没建）。orchestrator 先建 router，再建 pool：`router.set_run_stamper(stamper)` 让事件写库前按归属缓存补 run 维度戳；sessions 表普通写由 router 直达 EventStore 写连接（store 层对 core 零运行时引用，残留仅 RunStamper 签名的 TYPE_CHECKING 类型引用；mint/discard 的事务内嵌名册写在 RunStore 连接内自持）；`pool.set_event_router(router)` 让 pool 的 `_persist_session` 能调到 `store_session`（守护进程单库直写，不按 session cwd 路由）。缺任一注入，对应方向的功能就空跑。
@@ -421,7 +422,7 @@ Driver (ABC)
   │         allowed_tools, disallowed_tools, permission_mode="", env, hooks)
   │         → AsyncIterator[Event]
   ├── stop() → None
-  ├── update_session_title(sdk_session_id, name) → bool   # concrete noop
+  ├── update_session_title(native_session_id, name) → bool   # concrete noop
   │         default; opencode overrides (sqlite UPDATE), SDK/CLI inherit noop
   └── is_running: bool        # abstract property
 ```
@@ -447,9 +448,9 @@ Driver (ABC)
 
 > **Hook Server 启动**：启动时从命令运行目录下的 `workflow-controller-config.yaml` 读取 `hook_server`。设置页保存该文件，下次启动按新的配置监听。`hook_server.enabled` 默认为 `true`，监听地址默认为 `localhost:18765`。启用后首次绑定失败即终止 Workflow Controller 启动。`boot()` 在共享 API 边界把 Hook Server 绑定错误转换为 `BootError`，Web 和 headless 各自呈现启动失败；CLI `main()` 不感知 Hook Server 的底层异常。Web 和 headless 均以退出码 3 退出并报告监听地址和系统错误，headless 在标准输出写入 JSON 错误事件。显式设为 `false` 时可跳过监听，启动时也会跳过插件装载。Claude CLI 的 Stop 审核和工具提问经 HTTP 回调进入控制器。Claude SDK 和 OpenCode 的 reviewer 回调走进程内通道。
 
-> **overlay 注册表外溢剥离**（阶段 A）：opencode-only 的 overlay 状态（per-session + per-project 的 subagent hints + 全局 instructions）原活在 `orchestrator` 的 4 个 dict + 14 个方法里（SDK/CLI 永远空跑）。现抽到 `core/overlay_registry.py` 的 `OverlayRegistry`：orchestrator 持 `self._overlays`，公开方法降为一行转发、新增 `overlays` 属性供直接访问；`start_session_with_config` / `start_session_with_resume` 经 `transfer_project_overlays` / `transfer_session_overlays` 注入。opencode driver 的 session 标题更新（原 `orchestrator._update_opencode_title` 直接 `sqlite3.connect` opencode DB）下沉为 driver-agnostic 的 `Driver.update_session_title(sdk_id, name)`——orchestrator 只轮询 `session.sdk_session_id` 后委托 driver（SDK/CLI noop），不再触碰 opencode 的 sqlite3。opencode DB 路径解析（`_resolve_opencode_db_path`）随之归入 `driver/opencode.py`，`session_api` 的只读/导入 helper 改从 driver 包 import。
+> **overlay 注册表外溢剥离**（阶段 A）：opencode-only 的 overlay 状态（per-session + per-project 的 subagent hints + 全局 instructions）原活在 `orchestrator` 的 4 个 dict + 14 个方法里（SDK/CLI 永远空跑）。现抽到 `core/overlay_registry.py` 的 `OverlayRegistry`：orchestrator 持 `self._overlays`，公开方法降为一行转发、新增 `overlays` 属性供直接访问；`start_session_with_config` / `start_session_with_resume` 经 `transfer_project_overlays` / `transfer_session_overlays` 注入。opencode driver 的 session 标题更新（原 `orchestrator._update_opencode_title` 直接 `sqlite3.connect` opencode DB）下沉为 driver-agnostic 的 `Driver.update_session_title(sdk_id, name)`——orchestrator 只轮询 `session.native_session_id` 后委托 driver（SDK/CLI noop），不再触碰 opencode 的 sqlite3。opencode DB 路径解析（`_resolve_opencode_db_path`）随之归入 `driver/opencode.py`，`session_api` 的只读/导入 helper 改从 driver 包 import。
 
-> **subagent 跟踪剥离**（阶段 B）：在途子代理追踪（`_subagent_status` dict）+ `_on_subagent_start/progress/stop` 三个 `DriverHooks` callback + `SUBAGENT_*` 事件发射 + WAITING_RETRY 精确唤醒（在途归零即 `wake_retry()` 提前唤醒，不等满 600s）原活在 `orchestrator`。现抽到 `core/subagent_tracker.py` 的 `SubagentTracker`（OverlayRegistry 风格：构造注入 `bus`/`pool`/`loop_getter`；`on_start/on_progress/on_stop` **即** `DriverHooks` 的 `on_subagent_*` callback——发射事件 + 维护在途状态，非 bus observer；`make_driver_hooks` 直接绑 tracker 方法）。reviewer 经 `in_flight(session_id)` 读在途状态：Stop 时在途子代理非空则直接放行本次暂停（`action="stop"`，不调 reviewer LLM），原查询继续等子代理结果；在途清空后下一次 Stop 才恢复 LLM 判定。CLI↔Workflow Controller session 解析器（`_cli_to_workflow_controller_session` / `_register_session` / `resolve_cli_session_id`）**留 orchestrator**——被 stop-hook、AUQ pre-tool-use 等非 subagent 路径共用，且 `_register_session` 缠 `sdk_session_id` 持久化 + 是 `ITERATION_START` 的 bus observer，非 subagent 专属。
+> **subagent 跟踪剥离**（阶段 B）：在途子代理追踪（`_subagent_status` dict）+ `_on_subagent_start/progress/stop` 三个 `DriverHooks` callback + `SUBAGENT_*` 事件发射 + WAITING_RETRY 精确唤醒（在途归零即 `wake_retry()` 提前唤醒，不等满 600s）原活在 `orchestrator`。现抽到 `core/subagent_tracker.py` 的 `SubagentTracker`（OverlayRegistry 风格：构造注入 `bus`/`pool`/`loop_getter`；`on_start/on_progress/on_stop` **即** `DriverHooks` 的 `on_subagent_*` callback——发射事件 + 维护在途状态，非 bus observer；`make_driver_hooks` 直接绑 tracker 方法）。reviewer 经 `in_flight(session_id)` 读在途状态：Stop 时在途子代理非空则直接放行本次暂停（`action="stop"`，不调 reviewer LLM），原查询继续等子代理结果；在途清空后下一次 Stop 才恢复 LLM 判定。CLI↔Workflow Controller session 解析器（`_cli_to_workflow_controller_session` / `_register_session` / `resolve_cli_session_id`）**留 orchestrator**——被 stop-hook、AUQ pre-tool-use 等非 subagent 路径共用，且 `_register_session` 缠 `native_session_id` 持久化 + 是 `ITERATION_START` 的 bus observer，非 subagent 专属。
 
 > **query 开始清理**：`SubagentTracker` 的在途记录在下一轮 `session.query()` 开始前清理。`SingleLoopEngine` 在 `_run_iteration` 调用 `session.query()` 前调用 `on_query_start(session.id)`，orchestrator 将其接到 `SubagentTracker.clear_session`。清理点选在 query **开始**而非**结束**：query 结束后到 iteration 边界门禁之间仍可能有子代理在途（reviewer 的 `wait_and_retry` 会在子代理在途时结束 query），breather 的 `on_iteration_boundary` / `_on_context_event` 需靠 `in_flight` 判断「子代理仍在跑」以推迟 handoff——在 query 结束清空会让这些延迟分支读不到在途记录而提前 handoff。既保住边界门禁的延迟语义，又确保即使上游未发送 `SubagentStop`，下一轮 query 也读不到上轮残留。
 >
@@ -484,8 +485,8 @@ CLI 子进程启动失败时按实际执行的第一个命令报错；配置了 
 
 > **hook 事件的 native id 路由**：HookServer 收到的是 CLI/SDK 侧的原生 session id，
 > 解析顺序为内存映射 dict → `run_sessions.native_session_id` 列（权威源）→ 池内
-> 直查 → 按 `sdk_session_id` 线性扫兜底。native id 在 ITERATION_START 捕获
-> `sdk_session_id` 的同一写点记账进 run_sessions 列，写序为列先落、映射随后
+> 直查未命中时，按 `native_session_id` 线性查找。native id 在 ITERATION_START 捕获
+> `native_session_id` 的同一写点记账进 run_sessions 列，写序为列先落、映射随后
 > （列是重启后的唯一权威源，换绑两段间崩溃不把路由回退到旧持有）；attach
 > 带 native id 的换绑/重挂写点在落账后同款同步映射——全部列写点的映射不
 > 旧于列。写入语义

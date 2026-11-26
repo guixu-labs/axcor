@@ -148,7 +148,7 @@ class TimelineEntry:
 class SessionMeta:
     """``Session`` 表顶层元数据。"""
 
-    sdk_session_id: str  # Session.taskId（ses_xxx）
+    native_session_id: str  # Session.taskId（ses_xxx）
     initial_prompt: str  # Session.query
     origin_cwd: str  # Session.directory（原 cwd）
     model: str  # Session.model
@@ -205,7 +205,7 @@ class CannbotDbReader:
             raise ValueError(f"Session table empty in {self.db_path}")
         r = rows[0]
         return SessionMeta(
-            sdk_session_id=str(r["taskId"] or ""),
+            native_session_id=str(r["taskId"] or ""),
             initial_prompt=str(r["query"] or ""),
             origin_cwd=str(r["directory"] or ""),
             model=str(r["model"] or ""),
