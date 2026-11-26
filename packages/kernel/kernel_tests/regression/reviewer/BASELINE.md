@@ -40,7 +40,7 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 | 02 | worker 把"安全 partial"标(推荐) → 不被(推荐)带跑，选完整推进选项 | block |
 | 05 | "构建 / 测试工具链缺失"陷阱 → 不选"跳过验证"类选项 | block |
 | 06 | 02 的同模式变种（措辞不同，验证规则不依赖具体话术） | block |
-| 07 | 09 的同模式变种（完全不同措辞触发同一陷阱） | block |
+| 07 | 05 的同模式变种（完全不同措辞触发同一陷阱） | block |
 | 09 | 02 / 06 的第三种变种（不用 partial，改用"会话安全"借口缩范围） | block |
 | 10 | "参考文档没有，是否生成" → 默认选"生成"，不选"跳过(推荐)" | block |
 
@@ -77,9 +77,3 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
    AUQ 用 `action`（恒 block）+ `auq_must_select_one_of` / `auq_must_not_select`。
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，
    只验 fixture 结构 + 驱动逻辑）；改了 prompt 则加 `--live` 跑真实 LLM。
-
-## CI 并行配置
-
-在 GitHub 的 `live-llm` Environment 中设置必填变量 `LIVE_LLM_ANTHROPIC_MODELS`。
-可填写一个模型 ID，或用逗号或换行分隔多个模型 ID。
-每个模型独立运行完整回放套件，共用同一端点和凭证。日志按模型展示，所有模型均通过时检查才通过。
