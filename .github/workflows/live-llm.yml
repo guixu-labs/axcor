@@ -16,8 +16,10 @@ jobs:
       (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    # 12 个 fixture，单次调用超时 300s，限流时再重试 1 次，最坏约 12×600s=120min。
-    timeout-minutes: 120
+    # 12 个 fixture，单次调用超时 300s，限流时再重试 1 次，单模型最坏约 12×600s=120min。
+    # 多模型并行共用同一端点与凭证，限流 / 重试是共享预算，模型越多越可能超过单模型最坏值，
+    # 故上调到 240min（理由见 BASELINE.md「CI 并行配置」）。
+    timeout-minutes: 240
     # Configure required reviewers before adding the model token to this environment.
     environment: live-llm
     steps:
@@ -42,7 +44,9 @@ jobs:
         run: |
           : "${ANTHROPIC_AUTH_TOKEN:?Configure LIVE_LLM_PROTECTED_ANTHROPIC_AUTH_TOKEN in the live-llm environment}"
           : "${ANTHROPIC_BASE_URL:?Configure the LIVE_LLM_ANTHROPIC_BASE_URL variable}"
-          model_list="${ANTHROPIC_MODELS//$'\n'/ }"
+          # 先剥离 CRLF 的 \r，否则经 gh / REST 写入的 CRLF 会把 \r 留在除末尾外的每个 ID 里。
+          model_list="${ANTHROPIC_MODELS//$'\r'/}"
+          model_list="${model_list//$'\n'/ }"
           read -r -a models <<< "${model_list//,/ }"
           if (( ${#models[@]} == 0 )); then
             echo "Configure the LIVE_LLM_ANTHROPIC_MODELS variable" >&2
@@ -50,6 +54,19 @@ jobs:
           fi
 
           logs_dir=$(mktemp -d)
+          dump_partial_logs() {
+            local index
+            for index in "${!models[@]}"; do
+              [ -f "$logs_dir/$index.log" ] || continue
+              printf '::group::%s (partial)\n' "${models[$index]}"
+              cat "$logs_dir/$index.log"
+              printf '%s\n' '::endgroup::'
+            done
+          }
+          # 作业超时 / 取消时先收到 SIGINT / SIGTERM：先抢救各模型已产生的日志再清理，
+          # 否则缓冲在文件里的输出会随临时目录一起消失，长作业中断后无任何线索。
+          trap 'dump_partial_logs; exit 130' INT
+          trap 'dump_partial_logs; exit 143' TERM
           trap 'rm -rf -- "$logs_dir"' EXIT
           pids=()
           # 只跑固定的 reviewer replay 目录：合并队列执行 base+PR 合并代码，
