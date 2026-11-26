@@ -279,7 +279,7 @@ class TestContextTracker:
 
     @staticmethod
     def test_check_falls_back_to_command_when_no_result(session):
-        """无已记录读数 → fallback _check_from_command。sdk_id=None 使 command
+        """无已记录读数 → fallback _check_from_command。native_session_id=None 使 command
         短路返回未知（不真起子进程）。
         """
         session.native_session_id = None
@@ -1035,7 +1035,7 @@ class TestBreather:
         assert "no active session" in data["reason"]
 
     @staticmethod
-    def test_find_session_by_sdk_id_direct_match():
+    def test_find_session_by_native_id_direct_match():
         session = _make_session("worker")
         orch = _make_orchestrator(
             session, [_make_result(20000)], resolve=MagicMock(return_value=session.id)
@@ -1044,11 +1044,11 @@ class TestBreather:
         plugin = BreatherPlugin(_cfg("token", 70), MagicMock())
         plugin.install(_ctx(orch))
 
-        result = getattr(plugin, "_find_session_by_sdk_id")(session.native_session_id)
+        result = getattr(plugin, "_find_session_by_native_id")(session.native_session_id)
         assert result is session
 
     @staticmethod
-    def test_find_session_by_sdk_id_not_found():
+    def test_find_session_by_native_id_not_found():
         session = _make_session("worker")
         orch = _make_orchestrator(
             session, [_make_result(20000)], resolve=MagicMock(return_value=None)
@@ -1058,7 +1058,7 @@ class TestBreather:
         plugin = BreatherPlugin(_cfg("token", 70), MagicMock())
         plugin.install(_ctx(orch))
 
-        result = getattr(plugin, "_find_session_by_sdk_id")("nonexistent-id")
+        result = getattr(plugin, "_find_session_by_native_id")("nonexistent-id")
         assert result is None  # 不匹配任何 native_session_id
 
     @staticmethod
@@ -1269,7 +1269,7 @@ class TestNotifySkill:
         assert query_called
 
     @pytest.mark.asyncio
-    async def test_unknown_sdk_id_skipped(self):
+    async def test_unknown_native_id_skipped(self):
         session = _make_session()
 
         orch = _make_orchestrator(session, [_make_result(150000)])
@@ -1280,7 +1280,7 @@ class TestNotifySkill:
 
         await cb_store[0](
             Event.create(
-                session_id="unknown-sdk-id",
+                session_id="unknown-native-id",
                 iteration=0,
                 event_type=EventType.TOOL_RESULT,
                 data={"tool_name": "a2h-notify"},

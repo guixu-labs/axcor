@@ -111,7 +111,7 @@ async def _create_worker_session(orch: Orchestrator, args: argparse.Namespace):
     )
     s = await orch.pool.create(cfg)
     s.native_session_id = "cc-" + uuid.uuid4().hex[:12]
-    logger.info(f"  name={s.name}  sdk_session={s.native_session_id}")
+    logger.info(f"  name={s.name}  native_session={s.native_session_id}")
 
     # 注入上下文事件
     input_tokens = 20_000 if args.below else 150_000

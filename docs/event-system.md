@@ -38,7 +38,7 @@ class Event:
 | **消息** | `ASSISTANT_MESSAGE` | LLM 文本输出 | driver | loop 疑问检测、reviewer、前端 |
 | | `NOTIFICATION` | 系统消息（**纯展示性 notification 拋余桶**：CLI `/hooks/notification` payload、SDK `thinking_tokens` 遥测等；不再承载 iteration 起停——生命周期已拆出 ITERATION_START/END）| driver、HookServer `/hooks/notification` | 前端 |
 | | `ITERATION_START` | driver 单次 query() 调用开始、首次给出 sdk/cli session id（resume 前置）| driver（opencode `id_ready.set()` 时刻、SDK SystemMessage 带 session_id 子类、CLI stdout `subtype=init`）、HookServer `/hooks/session-start` | `_register_session`（类型化 observe 此类型存 native_session_id） |
-| | `ITERATION_END` | driver 单次 query() 调用结束、sdk session id 不再可用（driver 层、per-iteration；与编排层 `session_complete` 区分）| driver（opencode/SDK/CLI 的 query 末尾、异常路径）、HookServer `/hooks/session-end` | 插件 `bus.observe(ITERATION_END, handler)` |
+| | `ITERATION_END` | driver 单次 query() 调用结束、native session id 不再可用（driver 层、per-iteration；与编排层 `session_complete` 区分）| driver（opencode/SDK/CLI 的 query 末尾、异常路径）、HookServer `/hooks/session-end` | 插件 `bus.observe(ITERATION_END, handler)` |
 | | `USER_MESSAGE` | 用户输入 | driver（opencode 不回显用户输入，主动发）| 前端展示 |
 | | `STEP_FINISH` | step/turn 结果（含 usage）| driver | auth_rotator、breather（抽 usage）、reviewer |
 | | `ERROR` | 错误（**可观测日志**）| driver | 前端展示；LimitDetector 不消费（限流信号已由 driver 翻成 `RATE_LIMIT`，ERROR 不再承载轮换决策）|
@@ -81,7 +81,7 @@ class Event:
 > **ITERATION_START / ITERATION_END vs `session_complete` 的层级区分**
 > 三个事件表达不同层级的生命周期：
 > - `ITERATION_START` / `ITERATION_END` — **driver 层、per-iteration**：单次 driver
->   `query()` 调用的起止 + sdk session id 颁发/失效。一个 session 在 loop 模式下
+>   `query()` 调用的起止 + native session id 颁发/失效。一个 session 在 loop 模式下
 >   会有 N 对 ITERATION_START/END（每 iteration 一对），resume 前置由
 >   ITERATION_START 携带的 `session_id` 字段承担（`_register_session` 类型化
 >   observe 此类型）。命名取「iteration」而非「session」是为了与下面的

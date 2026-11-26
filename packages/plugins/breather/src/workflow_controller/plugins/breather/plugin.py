@@ -725,20 +725,20 @@ class BreatherPlugin(Plugin):
             return data
         return self.config.extra or {}
 
-    def _find_session_by_sdk_id(self, sdk_id: str) -> Any:
+    def _find_session_by_native_id(self, native_session_id: str) -> Any:
         services = self._services
-        ouro_id = services.resolve_cli_session_id(sdk_id)
+        ouro_id = services.resolve_cli_session_id(native_session_id)
         if ouro_id:
             session = services.find_session(ouro_id)
             if session is not None:
                 return session
         # Also try direct Workflow Controller session ID lookup (SUBAGENT events from
         # opencode driver carry the Workflow Controller session ID, not an SDK session ID).
-        session = services.find_session(sdk_id)
+        session = services.find_session(native_session_id)
         if session is not None:
             return session
         return next(
-            (s for s in services.list_sessions() if s.native_session_id == sdk_id),
+            (s for s in services.list_sessions() if s.native_session_id == native_session_id),
             None,
         )
 
@@ -755,7 +755,7 @@ class BreatherPlugin(Plugin):
     async def _check_context(self, session: Any) -> Any:
         result = await self._make_tracker(session).check()
         logger.info(
-            "breather: ouro_id=%s sdk_id=%s context=%d/%d (%s), threshold=%.0f%%, method=%s",
+            "breather: ouro_id=%s native_id=%s context=%d/%d (%s), threshold=%.0f%%, method=%s",
             session.id,
             session.native_session_id,
             result.current_tokens,
@@ -802,10 +802,10 @@ class BreatherPlugin(Plugin):
         notify = self._cfg("notify_skill", "")
         if event.data.get("tool_name") != notify:
             return
-        sdk_id = event.session_id
-        worker = self._find_session_by_sdk_id(sdk_id)
+        session_id = event.session_id
+        worker = self._find_session_by_native_id(session_id)
         if worker is None:
-            logger.debug("notify_skill hook: no session for sdk_id=%s", sdk_id)
+            logger.debug("notify_skill hook: no session for session_id=%s", session_id)
             return
         self._select_state(worker.id)
         if self._handoff_pending:
@@ -866,9 +866,11 @@ class BreatherPlugin(Plugin):
         if event.data.get("status") == "interrupted":
             logger.info("on_context_event: skip interrupted stop (internal bookkeeping)")
             return None
-        worker = self._find_session_by_sdk_id(event.session_id)
+        worker = self._find_session_by_native_id(event.session_id)
         if worker is None:
-            logger.info("on_context_event: worker not found for sdk_id=%s", event.session_id[:20])
+            logger.info(
+                "on_context_event: worker not found for session_id=%s", event.session_id[:20]
+            )
             return None
         return worker
 
@@ -1215,7 +1217,9 @@ class BreatherPlugin(Plugin):
             logger.info("Updated session title for %s to '%s'", session.id, expected_name)
         else:
             logger.warning(
-                "Failed to update title for %s (sdk_id=%s)", session.id, session.native_session_id
+                "Failed to update title for %s (native_id=%s)",
+                session.id,
+                session.native_session_id,
             )
 
     def _find_initial_session(self, session: Any) -> Any | None:

@@ -254,12 +254,16 @@ def _recent_activity(events: list[Any]) -> list[dict[str, Any]]:
     return activity
 
 
-def _resolve_session_model(config: Any, sdk_id: str | None) -> str:
-    """会话模型：配置值为空/占位且 sdk 会话属于 opencode 时改读 opencode DB。"""
+def _resolve_session_model(config: Any, native_session_id: str | None) -> str:
+    """会话模型：配置值为空/占位且 native 会话属于 opencode 时改读 opencode DB。"""
     model = getattr(config, "model", "") if config else ""
     model_is_placeholder = not model or model.startswith("{")
-    if model_is_placeholder and sdk_id is not None and sdk_id.startswith("ses_"):
-        fb = _get_opencode_session_model(sdk_id)
+    if (
+        model_is_placeholder
+        and native_session_id is not None
+        and native_session_id.startswith("ses_")
+    ):
+        fb = _get_opencode_session_model(native_session_id)
         if fb:
             model = fb
     return model
@@ -325,8 +329,8 @@ class SessionInfo:
 
         activity = _recent_activity(events) if events else []
 
-        sdk_id = getattr(s, "native_session_id", None)
-        model = _resolve_session_model(config, sdk_id)
+        native_session_id = getattr(s, "native_session_id", None)
+        model = _resolve_session_model(config, native_session_id)
         reviewer = getattr(config, "reviewer", None) if config else None
         reply_fallback = getattr(s, "waiting_for_auto_reply_fallback", False) is True
         reviewer_mode = getattr(reviewer, "mode", None)
@@ -348,7 +352,7 @@ class SessionInfo:
             error=getattr(s, "last_error", None) or getattr(s, "_error", None),
             birth_handoff_doc=getattr(s, "birth_handoff_doc", None),
             result=getattr(s, "result", None),
-            native_session_id=sdk_id,
+            native_session_id=native_session_id,
             model=model,
             project_dir=getattr(config, "cwd", "") if config else "",
             run_id=getattr(config, "run_id", None) if config else None,
@@ -1366,8 +1370,8 @@ class SessionAPI:
         name = s.name
         if _is_design_md_compliant_name(name):
             return name
-        sdk_id = getattr(s, "native_session_id", None)
-        title = _get_opencode_session_title(sdk_id)
+        native_session_id = getattr(s, "native_session_id", None)
+        title = _get_opencode_session_title(native_session_id)
         return title if title else name
 
     # ── project-dir-keyed global instructions (pre-session, Dashboard) ────
@@ -1391,8 +1395,8 @@ class SessionAPI:
         name = s.name
         if _is_design_md_compliant_name(name):
             return  # Keep structured names as-is
-        sdk_id = getattr(s, "native_session_id", None)
-        title = _get_opencode_session_title(sdk_id)
+        native_session_id = getattr(s, "native_session_id", None)
+        title = _get_opencode_session_title(native_session_id)
         if title and title != name:
             try:
                 self._orch.event_router.update_session_name_sync(session_id, title)
