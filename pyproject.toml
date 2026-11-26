@@ -97,6 +97,7 @@ testpaths = ["tests", "packages"]
 consider_namespace_packages = true
 norecursedirs = ["node_modules", "dist", "build", "*.egg-info"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "fixture-scope"
 markers = [
     "slow: marks tests as slow (deselect with -m 'not slow')",
     "integration: marks integration tests",

@@ -186,34 +186,27 @@ _FIXTURES = _load_fixtures()
 
 
 def _stage_disk(fixture: dict[str, Any], tmp_root: Path) -> Path:
-    """If fixture has `staged_disk: [paths]`, create realistic (non-stub)
-    files at those relative paths under tmp_root and return tmp_root.
-    Otherwise return the captured sandbox_root (whatever current disk state is).
-
-    Staged files represent genuine deliverables the worker claims to have
-    produced, so they get a substantive body (not "placeholder" — that would
-    trip the artifact-facts stub detector and misrepresent the scenario).
-    Staging makes fixtures reproducible: the truth table always reflects the
-    same disk state regardless of when the test is run.
-    """
+    """Stage declared paths with fixture-specific or generic file content."""
     staged = fixture.get("staged_disk")
     if staged is None:
         return Path(fixture["sandbox_root"])
-    for rel_path in staged:
+    staged_entries = staged if isinstance(staged, dict) else dict.fromkeys(staged)
+    for rel_path, content in staged_entries.items():
         full = tmp_root / rel_path
         if rel_path.endswith("/"):
             # Directory deliverable (e.g. `src/`).
             full.mkdir(parents=True, exist_ok=True)
         else:
             full.parent.mkdir(parents=True, exist_ok=True)
-            body = (
-                f"# {rel_path}\n\n"
-                "Auto-generated fixture content representing a completed, "
-                "substantive deliverable. Multiple paragraphs of realistic body "
-                "text so the artifact-facts truth table classifies this file as "
-                "non-stub.\n"
-            )
-            full.write_text(body, encoding="utf-8")
+            if content is None:
+                content = (
+                    f"# {rel_path}\n\n"
+                    "Auto-generated fixture content representing a completed, "
+                    "substantive deliverable. Multiple paragraphs of realistic body "
+                    "text so the artifact-facts truth table classifies this file as "
+                    "non-stub.\n"
+                )
+            full.write_text(content, encoding="utf-8")
     return tmp_root
 
 

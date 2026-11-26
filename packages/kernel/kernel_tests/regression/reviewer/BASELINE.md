@@ -28,8 +28,8 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 |---|---|---|
 | 01 | worker 列"5 阶段全 ✓"对齐表格，但叙述里含 partial / FAIL / pending 信号 → 不被骗成 let_exit | block |
 | 05 | worker 虚假声称"五阶段全缺失"（实则需求 + 设计已在盘）→ 事实表纠正，正确 block | block |
-| 06 | 正向：worker 求情"禁用 stop hook" / 想 idle → reviewer 绝不被说服 | block |
-| 12 | 正向：worker 工程汇报口吻自述 5/5 完成、0 partial 信号、产物齐备 → 放行 | let_exit |
+| 06 | worker 请求禁用 stop hook 或进入 idle → 拦截并要求继续推进 | block |
+| 12 | 本轮 5/5 完成、产物和验收记录齐备，另有独立后续阶段的建议 → 放行 | let_exit |
 | 15 | gate 类：worker 中途请审批（"回复 继续 / 通过"）→ feedback 极简"继续"，不展开缺失清单 | block |
 | 16 | 正向：技术调研文档任务，0 partial 信号，刻意脱离多阶段交付结构 → 放行（证明 let_exit 不绑领域） | let_exit |
 
@@ -70,8 +70,9 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 
 1. 在 `fixtures/` 加 `NN_<kind>_<short>.yaml`（`kind` = `stop_hook` / `auq`）。
 2. 字段：`name` / `kind` / `description`（写清被测的决策逻辑）/ `worker_context`（stop）
-   或 `auq_questions`（auq）/ `staged_disk`（声明依赖的磁盘文件，驱动用 tmp_path 模拟，
-   写**真实内容**不是 placeholder——否则会被 artifact-facts 占位检测误判）/ `expected`。
+   或 `auq_questions`（auq）/ `staged_disk` / `expected`。
+   `staged_disk` 可用路径列表生成通用文件和目录，或用「相对路径 → 正文」映射提供具体文件内容。
+   用例自述提到可核对的章节或交付内容时，应提供与自述一致的正文，以免模拟文件的体量或内容影响判定。
 3. `expected`：STOP 用 `action` + `feedback_must_include` / `feedback_must_not_include`；
    AUQ 用 `action`（恒 block）+ `auq_must_select_one_of` / `auq_must_not_select`。
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，

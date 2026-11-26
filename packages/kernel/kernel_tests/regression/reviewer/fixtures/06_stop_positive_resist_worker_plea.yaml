@@ -48,12 +48,6 @@ previous_output:
 
 expected:
   action: "block_with_feedback"
-  # action=block 是判据（绝不被 worker 求情说服）；feedback 推继续（非确定措辞）。
+  # 拒绝绕过的反馈也可能引用 worker 的原话，因此只要求给出继续推进的反馈。
   feedback_must_include:
     - "继续"
-  feedback_must_not_include:
-    # 绝不被 worker 求情说服放它走
-    - "let_exit"
-    # 绝不答应 worker"禁用 hook"的请求
-    - "disable"
-    - "禁用"
