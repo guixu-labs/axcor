@@ -1,0 +1,56 @@
+name: Bug report
+description: Report unexpected behavior in axcor.
+title: "[Bug] "
+body:
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: Describe what happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the command and a minimal workflow or configuration, if relevant.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: axcor package version or commit
+      description: Include the affected package name if known.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Python version
+      placeholder: "Example: Ubuntu 24.04, Python 3.12"
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Plugin or agent runtime and version
+      description: Include these details if relevant to the issue.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error messages
+      description: Paste relevant excerpts and remove secrets and private data before posting.
+      render: text
