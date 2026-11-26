@@ -311,6 +311,7 @@ class TestOrchestrator:
         orchestrator._refresh_runtime_hooks(session.config.runtime, tmp_path)
         driver_hooks = orchestrator.make_driver_hooks(session.id)
 
+        assert driver_hooks.hook_server_base_url == "http://127.0.0.1:18999"
         assert driver_hooks.file_change_hook_url == "http://127.0.0.1:18999"
         assert (tmp_path / ".codex" / "hooks.json").exists()
 

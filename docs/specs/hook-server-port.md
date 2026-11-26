@@ -50,7 +50,8 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 
 1. controller 实例在启动时固化 `effective_hook_port`。
 2. 它来自 CLI 参数或默认值，不落盘、不写回 YAML。
-3. HookServer 绑定、Claude `.claude/settings.json`、Codex `WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 与 DriverHooks 的 file-change hook URL 全部从这里取值。
+3. HookServer 绑定、Claude `.claude/settings.json` 与 DriverHooks 中的通用
+   Hook Server URL / OpenCode file-change URL 全部从这里取值。
 
 ### Claude CLI
 
@@ -62,11 +63,16 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 
 1. Codex hook 通过 `WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 获得转发地址。
 2. 该环境变量由 `effective_hook_port` 生成。
-3. Codex session 激活前校验：
+3. Codex session 激活前由 driver 的 `refresh_hooks` 校验：
    - Hook Server 可用；
-   - `WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 的端口等于 `effective_hook_port`；
    - managed Codex hooks 配置仍然有效。
-4. 校验失败时拒绝激活，而不是让 hook 请求打到错误端口后超时。
+4. `DriverHooks.hook_server_base_url` 是通用的 runtime Hook Server 地址；
+   Codex 读取它生成 `WORKFLOW_CONTROLLER_HOOK_SERVER_URL`。
+5. `DriverHooks.file_change_hook_url` 仅保留 OpenCode 文件归因语义；
+   OpenCode 继续读取它注入 file-provenance 插件。
+6. 构造 Codex 子进程环境前，`_codex_hook_invocation` 校验该 URL 非空且为带
+   host/port 的 `http` URL，再写入 `WORKFLOW_CONTROLLER_HOOK_SERVER_URL`。
+7. 校验失败时拒绝激活或继续运行，而不是让 hook 请求打到错误端口后超时。
 
 ## 施工计划
 
@@ -74,7 +80,8 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 2. Web 与 headless 组合根读取该环境变量并传入 controller。
 3. 从配置模型、ConfigAPI 与设置页移除 `hook_server.port`。
 4. HookServer 绑定与全部 hook URL 消费方统一使用 `effective_hook_port`。
-5. 补齐 Claude 与 Codex 激活前的一致性校验。
+5. 补齐 Claude 与 Codex 激活前的一致性校验；Codex URL 一致性由单一构造源
+   与测试守护，运行前校验位于 `_codex_hook_invocation`。
 6. 更新 `--help`、README 和 Web UI 文档。
 
 ## 验收标准
@@ -88,5 +95,6 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 7. `workflow-controller web --help` 能明确区分 Web UI 端口与 Hook Server 端口。
 8. `workflow-controller codex-hook --help` 不与 Hook Server 端口参数混淆。
 9. Claude CLI 激活前，`.claude/settings.json` 中的 hook URL 端口与 Hook Server 实际监听端口一致。
-10. Codex CLI 激活前，`WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 的端口与 Hook Server 实际监听端口一致。
+10. Codex CLI 子进程的 `WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 来自
+    `DriverHooks.hook_server_base_url`；测试断言该 URL 与 Hook Server 实际监听端口一致。
 11. 相关单元测试与集成测试全部通过。

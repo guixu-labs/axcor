@@ -672,6 +672,7 @@ class Orchestrator:
             )
         return DriverHooks(
             session_id=mig_session_id,
+            hook_server_base_url=self.hook_server_base_url,
             on_pre_tool_use=self._handle_driver_pre_tool_use,
             on_post_tool_use=self._handle_driver_post_tool_use,
             file_change_hook_url=self.hook_server_base_url,

@@ -30,6 +30,7 @@ from workflow_controller.driver.codex_cli import (
     CodexCLIDriver,
     _build_args,
     _codex_config_overrides,
+    _codex_hook_invocation,
     _codex_line_to_events,
     _codex_proc_env,
     _codex_subagent_fact,
@@ -96,7 +97,7 @@ async def _query_with_managed_hooks(
         env=_QUERY_ENV,
         hooks=DriverHooks(
             session_id="session-1",
-            file_change_hook_url="http://127.0.0.1:18765",
+            hook_server_base_url="http://127.0.0.1:18765",
             runtime_hook_config_valid=lambda: writer.is_managed(tmp_path),
         ),
     ):
@@ -1783,6 +1784,20 @@ async def test_query_rejects_changed_hooks_before_spawn(tmp_path, monkeypatch):
 
     assert events[-1].data["reason"] == "rejected_params"
     assert "managed" in events[1].data["error"]
+
+
+def test_query_rejects_invalid_hook_url(tmp_path):
+    writer = CodexHookConfigWriter()
+    writer.prepare(tmp_path)
+
+    with pytest.raises(ValueError, match="HTTP URL with host and port"):
+        _codex_hook_invocation(
+            DriverHooks(
+                session_id="session-1",
+                hook_server_base_url="https://127.0.0.1:18765",
+                runtime_hook_config_valid=lambda: writer.is_managed(tmp_path),
+            ),
+        )
 
 
 def test_codex_proc_env_drops_host_provider_secrets(tmp_path, monkeypatch):

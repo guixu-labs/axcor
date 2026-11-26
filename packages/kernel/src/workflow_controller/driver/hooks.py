@@ -116,6 +116,8 @@ class DriverHooks:
     """Hook callbacks the orchestrator hands to a driver for one session."""
 
     session_id: str
+    # 通用 Hook Server base URL；需要子进程回连 Hook Server 的 runtime 可用。
+    hook_server_base_url: str | None = None
     on_pre_tool_use: HookHandler | None = None
     on_post_tool_use: ToolNotificationHandler | None = None
     file_change_hook_url: str | None = None

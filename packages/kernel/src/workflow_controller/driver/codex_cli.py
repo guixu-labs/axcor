@@ -211,12 +211,22 @@ def _codex_hook_invocation(
         return {}
     if not validator():
         raise ValueError("codex_cli hooks must stay managed")
-    server_url = hooks.file_change_hook_url if hooks else None
+    server_url = hooks.hook_server_base_url if hooks else None
     if not server_url:
         raise ValueError("codex_cli hooks require HookServer url")
+    _validate_hook_server_url(server_url)
     return {
         "WORKFLOW_CONTROLLER_HOOK_SERVER_URL": server_url,
     }
+
+
+def _validate_hook_server_url(
+    server_url: str,
+) -> None:
+    """校验 Codex hook URL 是带 host/port 的 HTTP URL。"""
+    parsed = urlsplit(server_url)
+    if parsed.scheme != "http" or not parsed.hostname or parsed.port is None:
+        raise ValueError("codex_cli hook URL must be an HTTP URL with host and port")
 
 
 def _validate_codex_run(
@@ -350,7 +360,7 @@ class CodexCLIDriver(CLIDriverBase):
         hook_server_host: str,
         hook_server_port: int,
     ) -> None:
-        """Refresh Codex managed hooks and require a live Hook Server."""
+        """Refresh managed hooks and require a live Hook Server."""
         if not hook_server_active:
             raise HookServerStartupError("Codex CLI session requires an active Hook Server")
         CodexHookConfigWriter().prepare(project_dir)
