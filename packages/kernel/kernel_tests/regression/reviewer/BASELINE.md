@@ -77,3 +77,9 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
    AUQ 用 `action`（恒 block）+ `auq_must_select_one_of` / `auq_must_not_select`。
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，
    只验 fixture 结构 + 驱动逻辑）；改了 prompt 则加 `--live` 跑真实 LLM。
+
+## CI 并行配置
+
+在 GitHub 的 `live-llm` Environment 中设置必填变量 `LIVE_LLM_ANTHROPIC_MODELS`。
+可填写一个模型 ID，或用逗号或换行分隔多个模型 ID。
+每个模型独立运行完整回放套件，共用同一端点和凭证。日志按模型展示，所有模型均通过时检查才通过。
