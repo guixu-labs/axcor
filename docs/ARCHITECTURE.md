@@ -741,7 +741,9 @@ AuthRotator
 │           ACTIVE，避免轻量健康检查无法解除认证错误轮换状态。
 ├── 轮转：rotate_to_first_available / rotate_to_next_key / rotate_key /
 │         schedule_pending_resets（按 provider 调度 reset；到期把该
-│         provider 从 EXHAUSTED 恢复为 ACTIVE/UNUSED）
+│         provider 从 EXHAUSTED 恢复为 ACTIVE/UNUSED；若 reset_at 已过期而立即
+│         恢复，全局 reset_at 同步清空，只在该 active provider 仍为 EXHAUSTED
+│         时保留）
 ├── 写入：set_keys / delete_provider / set_api_key / set_api_config / set_global_settings /
 │         sync_providers_from_config
 ├── 限流回调：on_limit_detected / on_rate_limit / on_quota_warning /

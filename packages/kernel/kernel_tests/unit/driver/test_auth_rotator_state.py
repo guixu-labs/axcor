@@ -111,6 +111,24 @@ def test_on_rate_limit_5h_switches_to_api_with_reset_at(tmp_path: Path) -> None:
     assert rotator.get_reset_at() == reset_dt
 
 
+def test_on_rate_limit_past_reset_immediately_clears_global_reset(tmp_path: Path) -> None:
+    """过期的 5h reset 立即恢复 provider，全局 reset_at 不残留。"""
+    (tmp_path / "settings.conf").write_text("api_keys:\n  - sk\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    rotator = AuthRotator(
+        state_path=tmp_path / "auth_state.json",
+        env_path=tmp_path / ".env",
+    )
+    reset_dt = datetime.now(tz=UTC) - timedelta(seconds=61)
+
+    rotator.on_rate_limit(scope="5h", reset_at=reset_dt)
+
+    provider = rotator.get_provider(0)
+    assert provider.status is KeyStatus.ACTIVE
+    assert provider.reset_at is None
+    assert rotator.get_reset_at() is None
+
+
 def test_on_rate_limit_weekly_switches_to_api_no_reset(tmp_path: Path) -> None:
     """weekly 限流切 API 模式，不记录恢复时间。"""
     env_file = tmp_path / ".env"
@@ -172,6 +190,35 @@ async def test_bound_rate_limit_schedules_per_provider_reset(
     assert rotator.get_provider(0).reset_at == reset_at
     assert scheduled == [(0, pytest.approx(3600 + 60))]
     assert set(rotator._reset_tasks) == {0}
+
+
+@pytest.mark.asyncio
+async def test_bound_past_rate_limit_immediately_clears_global_reset(
+    tmp_path: Path,
+) -> None:
+    """session-bound 过期 reset 立即恢复时，全局 reset_at 不被写回。"""
+    (tmp_path / "settings.conf").write_text("api_keys:\n  - sk\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    rotator = AuthRotator(
+        state_path=tmp_path / "auth_state.json",
+        env_path=tmp_path / ".env",
+        runtime="codex_cli",
+    )
+    reset_at = datetime.now(tz=UTC) - timedelta(seconds=61)
+
+    replacement = rotator.rotate_bound_provider(
+        0,
+        scope="rate_limit",
+        reset_at=reset_at,
+        runtime="codex_cli",
+    )
+    await asyncio.sleep(0)
+
+    provider = rotator.get_provider(0)
+    assert replacement is None
+    assert provider.status is KeyStatus.ACTIVE
+    assert provider.reset_at is None
+    assert rotator.get_reset_at() is None
 
 
 @pytest.mark.asyncio

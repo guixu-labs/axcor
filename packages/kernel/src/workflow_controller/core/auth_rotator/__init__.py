@@ -426,7 +426,7 @@ class AuthRotator:
             if reset_at is not None:
                 self._schedule_provider_reset(provider_index, reset_at)
             if self._active_index == provider_index:
-                self._reset_at = reset_at
+                self._reset_at = reset_at if provider.status == KeyStatus.EXHAUSTED else None
         replacement = next(
             (
                 idx
@@ -1989,8 +1989,15 @@ class AuthRotator:
         self._mark_exhausted(scope=scope, reset_at=reset_at)
         if reset_at is not None:
             self._schedule_provider_reset(self._active_index, reset_at)
+        provider = (
+            self._providers[original_active_index]
+            if (0 <= original_active_index < len(self._providers))
+            else None
+        )
         if scope == "5h":
-            self._reset_at = reset_at
+            self._reset_at = (
+                reset_at if provider and provider.status == KeyStatus.EXHAUSTED else None
+            )
         else:
             self._reset_at = None
 
