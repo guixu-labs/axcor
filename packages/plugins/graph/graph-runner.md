@@ -36,7 +36,7 @@ SessionPool。RunCoordinator 顺序执行动作，并把 session/process 结局�
 | pause/resume/stop | Runs API → RunCoordinator → `ControlNotification` | 组控和成员控都沿同一条 Run 通道顺序化 |
 | 执行 session / 验收 session | `NodeActivity` 的执行阶段与验收阶段 | `opsbot_session_id` 与 `verify_session_id` 分开维护，恢复时按阶段复用 |
 | 运行历史与实时刷新 | `node_history`、`node_state`、`projection_updated` 的 run 事件 | RunView 通过事件游标拉取，不调用旧 graph 端点 |
-| 崩溃恢复 | `GraphState` 将中断的 `running` 保留为 `stopped`，`prepare_recovery()` 再按 RunWorld 对账 | 可复用成员继续，消失成员才重排为新执行 |
+| 崩溃恢复 | `GraphState` 将中断的 `running` 保留为 `stopped`，`prepare_recovery()` 再按 RunWorld 核对 | 可复用成员继续，消失成员才重排为新执行 |
 
 ## 当前的执行/验收不变量
 
@@ -268,7 +268,7 @@ pending → running ──┤
 - `stopped` 不在 `_TERMINAL`，依赖 stopped 节点的下游不会被 `get_ready` 返回，因此暂停
   语义不受影响（续跑时 stopped 节点 resume，下游随后解锁）。
 
-最终退出循环后，若 graph 状态为 failed，仍会兜底把剩余 pending 节点标 skipped（覆盖
+最终退出循环后，若 graph 状态为 failed，仍会回退把剩余 pending 节点标 skipped（覆盖
 stopped 等无法传播的场景）。
 
 ## 并发模型
@@ -338,7 +338,7 @@ stopped 等无法传播的场景）。
 ## 文件清单
 
 ```
-src/workflow_controller/plugins/graph/
+packages/plugins/graph/src/workflow_controller/plugins/graph/
 ├── config.yaml          # enabled: false（默认关）
 ├── dag.py               # DAG + Kahn O(V+E) 查环
 ├── state.py             # DB 持久化 + 崩溃恢复 + increment_attempts + reload_from_db

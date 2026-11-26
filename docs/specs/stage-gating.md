@@ -1,6 +1,6 @@
 # 阶段门禁设计（staged_pipeline）
 
-> 本文是 opsbot「阶段门禁」机制 + `staged_pipeline` plugin 的设计文档，自洽可读，不依赖任何本地稿。reviewer 的内部机制见 [reviewer-design.md](reviewer.md)，本文只在两层关系处引用；实现 / 演进历史（commit 序列、refactor 史）见 [stage-gating-impl-log.md](../plans/stage-gating-implementation.md)。
+> 本文是 opsbot「阶段门禁」机制 + `staged_pipeline` plugin 的设计文档，自洽可读，不依赖任何本地稿。reviewer 的内部机制见 [架构文档](../ARCHITECTURE.md)，本文只在两层关系处引用。
 
 ## 0. 概览
 
@@ -27,7 +27,7 @@ CLAUDE.md 早就把「per-plugin 阶段门禁」标为未来方向。本文把�
 - Plugin 系统完整（base ABC + registry + SDK + hook 拦截器 + 观察者）。breather 是唯一真实 plugin，是任何 domain plugin 的模板。
 - **完成门禁在本次改动前就零改能做**：`on_stop_hook` 返回 `block` + reason，orchestrator 已翻成「喂 feedback 让 worker 继续」；plugin 拦截器在 reviewer **之前**跑、first-non-None 短路 reviewer。
 
-真正缺的一处：breather 影响 loop 走向的 loop-boundary 门禁，在 orchestrator 里是**硬编码按名字找 `"breather"`** 的——不在 Plugin 契约里，别的插件复用不了。**把它提升成通用 hook，是核心侧唯一要动的中枢。**
+真正缺的一处：breather 影响 loop 走向的 loop-boundary 门禁，在 orchestrator 里是**硬编码按名字找 `"breather"`** 的——不在 Plugin 接口里，别的插件复用不了。**把它提升成通用 hook，是核心侧唯一要动的中枢。**
 
 ### 1.3 目标 / 非目标
 
@@ -47,7 +47,7 @@ CLAUDE.md 早就把「per-plugin 阶段门禁」标为未来方向。本文把�
 
 ### 2.1 新增结果类型 `IterationGateResult`
 
-`src/workflow_controller/plugin/base.py`：
+`packages/kernel/src/workflow_controller/plugin/base.py`：
 
 ```python
 @dataclass
@@ -110,7 +110,7 @@ breather 实现 `on_iteration_boundary`：上下文超阈值 → 发起 handoff 
 
 **「两层」是职责层，不是时序层**（staged 里尤其要厘清）：通用 loop 有 turn、无阶段，reviewer 判每轮 turn 完成没——这时 reviewer 的 turn 级角色清晰。但 staged 把「一个阶段」绑到「一个 iteration」（worker 一轮一阶段），所以**阶段边界就是 turn 边界**——门禁和 reviewer **收敛到同一边界**，是同一轮的两个判定（结构 + 语义），不是两个先后跑的时序层。也因此 reviewer 在 staged 里**自己降级**成 per-stage 语义审（`review_stage`，判单个阶段），不再判「整体 turn 完成」（那是门禁 + `stages_complete` 干的）。
 
-reviewer 的内部机制（裸 HTTP / 固定请求形状 / 与 runtime 解耦）见 [reviewer-design.md §2.2](reviewer.md)。
+reviewer 的内部机制（裸 HTTP / 固定请求形状 / 与 runtime 解耦）见 [架构文档](../ARCHITECTURE.md)。
 
 ### 3.1 evaluator 在 staged 场景的位置（三者优先级链）
 
@@ -125,7 +125,7 @@ Workflow Controller 的 loop 在每个 iteration 末尾有一条**判定优先�
 
 **staged 场景下 evaluator 几乎从不被触及**——① 和 ③ 把它短路了。worker 每轮做一个阶段、停下 → ① 算 `k = completed_prefix`：`k==0` / 跳步 → `block`（短路 ④）；`0<k<总` → defer 给 boundary reviewer per-stage → 仍 `block`（短路 ④）；全过 → 置 `stages_complete` → ③ `let_exit` → COMPLETED（短路 ④）。
 
-所以 staged-pipeline 的完成语义由**门禁（结构）+ reviewer（语义）**接管，evaluator 退居兜底——只在门禁和 reviewer 都放行的边界情况、或最终 `max_iterations` 硬封顶时间接起作用。
+所以 staged-pipeline 的完成语义由**门禁（结构）+ reviewer（语义）**接管，evaluator 退居后备——只在门禁和 reviewer 都放行的边界情况、或最终 `max_iterations` 硬封顶时间接起作用。
 
 **为什么这样设计**：evaluator 是扁平的「这一轮完没完」判定（一个 `is_complete` bool），**它不懂阶段**；staged 的完成语义是「分阶段、每阶段都得过语义审」——evaluator 的模型表达不了。所以完成判定责任从 evaluator 转移到门禁+reviewer，否则一个 `PassThroughEvaluator`（`is_complete=False`）会让 loop 只在 `max_iterations` 停，把 reviewer 的判定整个吞掉（见 `loop.py` reviewer_let_exit 分支注释）。
 
@@ -133,7 +133,7 @@ Workflow Controller 的 loop 在每个 iteration 末尾有一条**判定优先�
 
 ## 4. `staged_pipeline` 门禁执行器 plugin
 
-`src/workflow_controller/plugins/staged_pipeline/`——一个**通用**门禁执行器：读 session 带来的领域 stages，确定性强制顺序 + 完成门禁。**stages 不在 plugin 里**——在项目 `opsbot.yaml`（经 session 传进来，§5）；plugin 只提供门禁逻辑。默认 `enabled: false`。
+`packages/plugins/staged-pipeline/src/workflow_controller/plugins/staged_pipeline/`——一个**通用**门禁执行器：读 session 带来的领域 stages，确定性强制顺序 + 完成门禁。**stages 不在 plugin 里**——在项目 `opsbot.yaml`（经 session 传进来，§5）；plugin 只提供门禁逻辑。默认 `enabled: false`。
 
 ```
 staged_pipeline/
@@ -141,7 +141,7 @@ staged_pipeline/
 └── plugin.py       # StagedPipelinePlugin：一道门(on_iteration_boundary)，stages 从 session 读
 ```
 
-阶段契约的求值函数（artifact 规范化/展示、门禁求值、阶段派生 + 跳步检测）住 SDK 中立模块 `src/workflow_controller/plugin/stages.py`——stages 是项目 `opsbot.yaml` 契约、非插件私有，orchestrator 的边界 review 文案、reviewer 的产物真值表、进度 API 与本 plugin 同源求值（核心与插件 import SDK 均合法）。求值函数全是纯函数（无副作用、易单测），`plugin.py` 只做编排（何时 block/defer + 纪律 prompt 注入）——匹配 breather 的分层风格。
+阶段约定的求值函数（artifact 规范化/展示、门禁求值、阶段派生 + 跳步检测）住 SDK 中立模块 `packages/kernel/src/workflow_controller/plugin/stages.py`——stages 是项目 `opsbot.yaml` 约定、非插件私有，orchestrator 的边界 review 文案、reviewer 的产物真值表、进度 API 与本 plugin 同源求值（核心与插件 import SDK 均合法）。求值函数全是纯函数（无副作用、易单测），`plugin.py` 只做编排（何时 block/defer + 纪律 prompt 注入）——匹配 breather 的分层风格。
 
 ### 4.1 门禁三模式（config 数据驱动）
 
@@ -232,7 +232,7 @@ N 个阶段 = N 个 iteration，每个 iteration 的 boundary 产出**两个检�
 
 > 实现待对齐：`_run_stage_review_at_boundary` 当前仍把 `gate_pass` defer 到 `review_stage` **之后**才 emit（代码注释里「成对 timestamp」是旧设计，本节推翻它）。按本节应改为：结构门禁一过即 emit `gate_pass`，reviewer 判定在其真实完成时刻 emit，两事件加 `stage_name`/`stage_index` linking 字段供前端配对。
 
-**reviewer 模式三分支**（0<k<总、结构门禁过之后，[orchestrator.py:`_run_stage_review_at_boundary`](../../src/workflow_controller/core/orchestrator.py)）：staged 里 turn=阶段，所以「人审 turn」=「人审阶段」，per-stage 判定由全局 reviewer 模式决定：
+**reviewer 模式三分支**（0<k<总、结构门禁过之后，[orchestrator.py:`_run_stage_review_at_boundary`](../../packages/kernel/src/workflow_controller/core/orchestrator.py)）：staged 里 turn=阶段，所以「人审 turn」=「人审阶段」，per-stage 判定由全局 reviewer 模式决定：
 
 - **auto**：reviewer `review_stage` 语义审 → approve（block 推进下一阶段）/ reject（block 重做）。
 - **manual**：**不**自动推进——emit「⏸ 阶段 X 已过门禁，等人工审查」+ `return None` → 落 loop 的 manual 分支等面板输入；人输入「通过」推进 / 指出问题重做 → feedback → 下一轮。让人逐阶段把关（替代 auto 的 LLM 审）。
@@ -256,7 +256,7 @@ manual 是**全局**（所有阶段都停等审）；若想要 per-stage 选择�
 
 ### 5.1 启用门禁执行器（全局，一次）
 
-staged_pipeline 默认 `enabled: false`，**不启用就不加载、门禁不生效**。在 web Settings → Plugins 找到 `staged_pipeline` 点 **Enable**（toggle 热加载、免重启）；或手编 `src/workflow_controller/plugins/staged_pipeline/config.yaml` 的 `enabled: true` + 重启 web。
+staged_pipeline 默认 `enabled: false`，**不启用就不加载、门禁不生效**。在 web Settings → Plugins 找到 `staged_pipeline` 点 **Enable**（toggle 热加载、免重启）；或手编 `packages/plugins/staged-pipeline/src/workflow_controller/plugins/staged_pipeline/config.yaml` 的 `enabled: true` + 重启 web。
 
 启用是**全局**的——但只对**声明了 stages 的项目**生效（没声明的 session 门禁惰性，§4.3）。所以启用一次即可，不用按项目开关。
 
@@ -315,14 +315,12 @@ stages:
 | `test_stages.py` | 44 | SDK 求值纯函数：stages 声明校验（`declared_stages` 滤缺 name / 缺空 artifacts / 非 dict 条目，全无效 → 空）、artifact 规范化（多 artifact 展开、`artifact` 列表缩略写法）与展示、门禁 exists（文件 + 目录）/ non_placeholder（缺失 / 占位 token / 实质 + 目录）/ command / `evaluate_gate` 派发、阶段派生 completed_prefix / detect_jump（含 prefix 复用） |
 | `test_staged_pipeline_plugin.py` | 12 | 门禁（`on_iteration_boundary`）从 `session.config.stages` 读；**无 stages → 惰性**（含 session 无该属性的防御）；`prompt_prefix` 纪律注入与 compose prepend |
 | `test_stages_config.py` | 6 | config plumbing：`AppConfig.from_yaml` 解析 stages、`SessionConfig` 携带、默认空 |
-| `test_iteration_boundary_gate.py` | 2 | SDK 契约兜底：`IterationGateResult` 字段默认值、基类 `on_iteration_boundary` 未覆写时 `pass` |
+| `test_iteration_boundary_gate.py` | 2 | SDK 约定回退：`IterationGateResult` 字段默认值、基类 `on_iteration_boundary` 未覆写时 `pass` |
 | `test_plugin_toggle.py` | 6 | web toggle 定点改 `enabled:` 行保注释（嵌套 / 注释行里的 enabled 不被动） |
 
-> 历史注：3 例端到端组合测试 `test_staged_pipeline_integration.py`（真 plugin + 真 dispatcher + 真 LoopEngine + fake worker）并非随本次重构移除——先行合入的 !176（commit `b1efc80`，清理 outdated iteration-boundary dispatcher 测试）已删除该文件；其组合的各环节部分由上表单测分摊覆盖（求值 = `test_stages.py`、plugin 门 = `test_staged_pipeline_plugin.py`、SDK 契约 = `test_iteration_boundary_gate.py`）；派发器与 LoopEngine 的串联消费暂无单测覆盖。
+> 历史注：3 例端到端组合测试 `test_staged_pipeline_integration.py`（真 plugin + 真 dispatcher + 真 LoopEngine + fake worker）并非随本次重构移除——先行合入的 !176（commit `b1efc80`，清理 outdated iteration-boundary dispatcher 测试）已删除该文件；其组合的各环节部分由上表单测分摊覆盖（求值 = `test_stages.py`、plugin 门 = `test_staged_pipeline_plugin.py`、SDK 约定 = `test_iteration_boundary_gate.py`）；派发器与 LoopEngine 的串联消费暂无单测覆盖。
 
-> 想不耗 LLM 看门禁的确定性证明：`pytest tests/workflow_controller_core/unit/run_plane/test_stages.py tests/plugins/staged_pipeline/test_gates.py tests/workflow_controller_core/unit/run_plane/test_iteration_boundary_gate.py -q`。真实多阶段跑见 [`examples/staged-pipeline/`](../../examples/staged-pipeline/)（README 讲运行 / 观察）。
-
-> 实现历史（初版 10-commit Phase A/B/C、subagent 评审记录、stages 归项目 refactor、后续演进 commit 表）见 [stage-gating-impl-log.md](../plans/stage-gating-implementation.md)。
+> 想不耗 LLM 看门禁的确定性证明：`pytest packages/kernel/kernel_tests/unit/run_plane/test_stages.py packages/plugins/staged-pipeline/tests/test_gates.py packages/kernel/kernel_tests/unit/run_plane/test_iteration_boundary_gate.py -q`。真实多阶段跑见 [`examples/staged-pipeline/`](../../examples/staged-pipeline/)（README 讲运行 / 观察）。
 
 ## 7. 限制与已知边界
 
@@ -331,21 +329,21 @@ stages:
 - **PostToolUse 细粒度跳步检测**（每次文件写即判，`bus.observe(TOOL_RESULT, ...)`）：本次不做。
 - **样例项目的真实客观 verify**（真跑测试框架）：样例用 `non_placeholder`，`command` 留口子（`examples/staged-pipeline/opsbot.yaml` 注释里给了换法）。
 - **多 plugin 组合优先级**：first block/stop wins（`pass` 跳过，按 load order），机制与 stop 拦截器的 first-non-None 同形；breather handoff 的 `stop` 与 staged 的 `block` 谁先由 load order 定，不特殊处理。
-- **`block` 无内部计数上限**：误写的 plugin（总返回 block）会把 loop 困到 `max_iterations`。`max_iterations` 是兜底。breather 的 stop 有 `_decide_stop` 的 block 上限，iteration-gate 的 block 没有——因为「该不该限」是 plugin 策略，loop 不该持有。
+- **`block` 无内部计数上限**：误写的 plugin（总返回 block）会把 loop 困到 `max_iterations`。`max_iterations` 是后备。breather 的 stop 有 `_decide_stop` 的 block 上限，iteration-gate 的 block 没有——因为「该不该限」是 plugin 策略，loop 不该持有。
 
 ## 8. 关键文件
 
 | 文件 | 职责 |
 |---|---|
-| `src/workflow_controller/plugin/base.py` | `IterationGateResult` + `on_iteration_boundary` async hook + `prompt_prefix` hook + `compose_initial_prompt` |
-| `src/workflow_controller/plugin/sdk.py` | re-export `IterationGateResult` |
-| `src/workflow_controller/core/orchestrator.py` | `_run_iteration_boundary_gates` 派发器；`_resolve_boundary_pending` / `_run_stage_review_at_boundary` 闭包；注入闭包（取代 name-coupled breather 查找） |
-| `src/workflow_controller/core/loop.py` | `iteration_gate` 参数；消费 `block`/`stop`/`pass` |
-| `src/workflow_controller/plugins/breather/plugin.py` | `on_iteration_boundary`（handoff→stop）；旧 `loop_boundary_check` 已删 |
-| `src/workflow_controller/plugin/stages.py` | 阶段契约共享求值面：artifact 规范化 + 展示（多 artifact 展开、`artifact` 列表缩略写法）、门禁求值（exists/non_placeholder/command；stage 全 artifact 过才 True）、阶段派生 + 跳步检测、stages 声明校验——核心（边界 review 文案、reviewer 产物真值表、进度 API）与 staged_pipeline plugin 同源消费 |
-| `src/workflow_controller/config/settings.py` | `AppConfig.stages` / `SessionConfig.stages`（per-project 阶段声明） |
-| `src/workflow_controller/plugins/staged_pipeline/plugin.py` | `StagedPipelinePlugin`：一道门 `on_iteration_boundary`（顺序+完成+defer per-stage）+ `prompt_prefix` 注入通用工作纪律；stages 从 `session.config.stages` 读（无则惰性） |
-| `src/workflow_controller/plugins/staged_pipeline/config.yaml` | name/version/enabled（默认 `false`；stages 归项目 opsbot.yaml） |
-| `src/workflow_controller/core/reviewer_service.py` | `review_stage`：per-stage 语义审（approve→推进 / reject→重做），总是 block_with_feedback |
+| `packages/kernel/src/workflow_controller/plugin/base.py` | `IterationGateResult` + `on_iteration_boundary` async hook + `prompt_prefix` hook + `compose_initial_prompt` |
+| `packages/kernel/src/workflow_controller/plugin/sdk.py` | re-export `IterationGateResult` |
+| `packages/kernel/src/workflow_controller/core/orchestrator.py` | `_run_iteration_boundary_gates` 派发器；`_resolve_boundary_pending` / `_run_stage_review_at_boundary` 闭包；注入闭包（取代 name-coupled breather 查找） |
+| `packages/kernel/src/workflow_controller/core/loop.py` | `iteration_gate` 参数；消费 `block`/`stop`/`pass` |
+| `packages/plugins/breather/src/workflow_controller/plugins/breather/plugin.py` | `on_iteration_boundary`（handoff→stop）；旧 `loop_boundary_check` 已删 |
+| `packages/kernel/src/workflow_controller/plugin/stages.py` | 阶段约定共享求值面：artifact 规范化 + 展示（多 artifact 展开、`artifact` 列表缩略写法）、门禁求值（exists/non_placeholder/command；stage 全 artifact 过才 True）、阶段派生 + 跳步检测、stages 声明校验——核心（边界 review 文案、reviewer 产物真值表、进度 API）与 staged_pipeline plugin 同源消费 |
+| `packages/kernel/src/workflow_controller/config/settings.py` | `AppConfig.stages` / `SessionConfig.stages`（per-project 阶段声明） |
+| `packages/plugins/staged-pipeline/src/workflow_controller/plugins/staged_pipeline/plugin.py` | `StagedPipelinePlugin`：一道门 `on_iteration_boundary`（顺序+完成+defer per-stage）+ `prompt_prefix` 注入通用工作纪律；stages 从 `session.config.stages` 读（无则惰性） |
+| `packages/plugins/staged-pipeline/src/workflow_controller/plugins/staged_pipeline/config.yaml` | name/version/enabled（默认 `false`；stages 归项目 opsbot.yaml） |
+| `packages/kernel/src/workflow_controller/core/reviewer_service.py` | `review_stage`：per-stage 语义审（approve→推进 / reject→重做），总是 block_with_feedback |
 | `examples/staged-pipeline/opsbot.yaml` | migbot 5 阶段可跑样例（stages + starting_prompt + task_goal） |
 | `examples/ascendc-operator/` | AscendC 算子复杂领域样例（11 阶段镜像 cannbot registry workflow + `gate: command` 硬化 spec/cp2/cp3 validator；非自包含，需 NPU+cannbot） |

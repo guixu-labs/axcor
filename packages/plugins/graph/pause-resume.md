@@ -1,6 +1,6 @@
 # Graph 工作流暂停、恢复与状态推导（Run 架构）
 
-本文把 Graph 工作流放在当前 Run 架构中说明。Run 是账面、控制和事件的唯一公共锚；GraphDriver 只负责 DAG 决策，RunCoordinator 负责把用户控制转换为驱动通知并执行驱动返回的动作。旧的独立 Graph API、GraphRunner 和 GraphView 不属于当前调用链。
+本文把 Graph 工作流放在当前 Run 架构中说明。Run 是记录、控制和事件的唯一统一入口；GraphDriver 只负责 DAG 决策，RunCoordinator 负责把用户控制转换为驱动通知并执行驱动返回的动作。旧的独立 Graph API、GraphRunner 和 GraphView 不属于当前调用链。
 
 ## 1. 责任边界
 
@@ -61,8 +61,8 @@ stateDiagram-v2
 RunView 的暂停请求走 `POST /api/v1/runs/{run_id}/pause`。RunCoordinator 先把请求转成 `ControlNotification(PAUSED)`，再交给 GraphDriver：
 
 1. 驱动设置组暂停标记，取消节点成员和进程的墙钟定时器。
-2. Coordinator 执行驱动返回的停止/暂停成员动作；尚未结束的执行成员和验收成员都保留在 Run 成员账面中。
-3. 节点在收到暂停结局或读对账时落为 `stopped`，并保留 `opsbot_session_id`、`verify_session_id`。
+2. Coordinator 执行驱动返回的停止/暂停成员动作；尚未结束的执行成员和验收成员都保留在 Run 成员记录中。
+3. 节点在收到暂停结局或读核对时落为 `stopped`，并保留 `opsbot_session_id`、`verify_session_id`。
 4. 没有失败节点时，投影变为 `paused`；已有失败节点时仍为 `failed`，但暂停断点不丢失。
 
 ```mermaid
@@ -90,7 +90,7 @@ RunView 的恢复请求走 `POST /api/v1/runs/{run_id}/resume`。驱动在下一
 | 节点状态 | 成员事实 | 行为 | session 结果 |
 | --- | --- | --- | --- |
 | `stopped` | 原执行/验收成员仍 `running`，或 `idle + user_pause` | 恢复等待活动；必要时发 `RestartSession(RESUME_IF_PAUSED)` | 复用原 session |
-| `stopped` | 成员在账面但运行时暂时不在池中 | 发恢复动作，等待重新挂载 | 仍复用原 session |
+| `stopped` | 成员在记录中但运行时暂时不在池中 | 发恢复动作，等待重新挂载 | 仍复用原 session |
 | `stopped` | 没有成员、成员已终态，或 bash 已被终止 | 清理节点成员字段并回到 `pending` | 新建 session/进程 |
 | `failed` / `skipped` | 任意 | 清理执行和验收成员，回到 `pending` | 新建 session/进程 |
 | `running` | 暂停受理窗口中尚未落 `stopped` | 依成员事实继续等待或恢复 | 不重复出生 |
@@ -101,7 +101,7 @@ RunView 的恢复请求走 `POST /api/v1/runs/{run_id}/resume`。驱动在下一
 flowchart TD
     R[resume / restart] --> W{RunWorld 中找到原成员?}
     W -->|可运行或 user_pause| X[保留 session_id\n恢复执行/验收活动]
-    W -->|账面存在但运行时缺失| Y[RestartSession\n等待恢复成员]
+    W -->|记录存在但运行时缺失| Y[RestartSession\n等待恢复成员]
     W -->|不存在或已终态| N[清理两个 session_id\n节点 pending]
     X --> D[GraphDriver 继续 decide]
     Y --> D
@@ -154,7 +154,7 @@ workflow Run 的成员暂停、恢复、停止和注入都走 `/runs/{run_id}/se
 
 普通隐式 Run 成员仍走通用 Session API；只有 workflow 成员经过 Run 面。这条分流保持控制台、内核和 Graph 插件的隔离。
 
-## 8. 崩溃恢复与读对账
+## 8. 崩溃恢复与读核对
 
 Coordinator 重启后从 RunStore 恢复驱动快照。GraphState 会把快照中 `running` 节点转换成 `stopped` 断点，同时记录 `interrupted_nodes`；第一次 `decide` 用 RunWorld 判断原成员能否复用。RunView 读取投影时，只有运行成员确实从 RunWorld 消失才执行 `reconcile_projection` 并产生事件；`idle + user_pause` 的异步恢复窗口不会被误标为停止。
 
@@ -162,7 +162,7 @@ Coordinator 重启后从 RunStore 恢复驱动快照。GraphState 会把快照�
 快照 running
     ↓ restore
 节点 stopped + interrupted_nodes
-    ↓ RunWorld 对账
+    ↓ RunWorld 核对
 可复用成员 ──→ RestartSession/继续等待
 不可复用成员 ─→ pending/新建成员
 ```

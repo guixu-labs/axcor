@@ -130,7 +130,7 @@ curl -s -X POST http://127.0.0.1:18765/breather \
 
 **等 subagent 返回点切片**：force 设 `_handoff_force_pending`（"想切"），**不立即切**，等**下一个 subagent 返回点**（`_on_context_event` 在那 check force → 主动停 worker 在干净 turn 边界 → finalize）。force 跳阈值检查，但切片位置仍统一在 subagent 返回点（合适停点）——和阈值检测走同一条路。无 subagent 的纯长轮任务无返回点可等 → force 不切（loose end；算子生成 primary+subagent 有 subagent 覆盖）。
 
-> 这意味着 skill 调 force 时应放在**接近自然停止点的位置**（如某阶段产物的最后一步之后）——worker 随即停下，handoff 很快落地。若 worker 调完 force 还继续干别的，handoff 会推迟到它下次自然停止（watchdog 30min 兜底）。force 不改阈值门以外任何行为，复用全部既有降级逻辑（§4）。
+> 这意味着 skill 调 force 时应放在**接近自然停止点的位置**（如某阶段产物的最后一步之后）——worker 随即停下，handoff 很快落地。若 worker 调完 force 还继续干别的，handoff 会推迟到它下次自然停止（watchdog 30min 后备）。force 不改阈值门以外任何行为，复用全部既有降级逻辑（§4）。
 
 > **web UI 入口**：Dashboard 每个 running session 有 **Handoff** / **Force** 两个按钮（§7），分别走阈值门和 force，命中的就是本端点（`/api/breather/handoff`，breather 经 `get_web_router` 暴露——它是首个用此机制的插件）。
 
@@ -189,7 +189,7 @@ handoff agent 写 `handoff.md` 时，内容来自三个来源（可靠性高 →
 
 主代理与子代理阈值可在项目 `opsbot.yaml` 中分别设置 `context_threshold_pct` 与 `subagent_context_threshold_pct`。整组交接由在途子代理越线启动，暂停主会话后再读取主代理用量：主代理也越线时，清单的 `main_handoff` 非空，交接会话须写主代理摘要及所有在途子代理摘要，新建主会话；仅子代理越线时，`main_handoff` 为空，恢复原主会话。两个阈值都设为 1% 只适合同时保持子代理在途的示例；主代理初始上下文可能已经超过 1%，若子代理提前返回，会先走普通主代理交接。
 
-整组 handoff session 使用内置 `GROUP_HANDOFF_PROMPT` 执行清单和完成信号要求；若设置 `handoff_prompt_path`，会先读取同一份交接指令，再附加整组执行要求。旧 `group_handoff_prompt_path` 仅在统一模板未设置时兼容读取。 Claude CLI 子代理类型初次未知时，转录的后续 `attributionAgent` 会更新在途记录，整组清单采用更新后的实际类型。`handoff_agent_timeout: 0` 表示等待交接文档时不设超时。可运行示例及首次交接验收步骤见 [确定性模拟](../../examples/subagent-group-handoff/README.md)和 [真实 Claude CLI 试跑](../../examples/subagent-only-handoff/README.md)。
+整组 handoff session 使用内置 `GROUP_HANDOFF_PROMPT` 执行清单和完成信号要求；若设置 `handoff_prompt_path`，会先读取同一份交接指令，再附加整组执行要求。旧 `group_handoff_prompt_path` 仅在统一模板未设置时兼容读取。 Claude CLI 子代理类型初次未知时，转录的后续 `attributionAgent` 会更新在途记录，整组清单采用更新后的实际类型。`handoff_agent_timeout: 0` 表示等待交接文档时不设超时。可运行示例及首次交接验收步骤见 [确定性模拟](../../../examples/subagent-group-handoff/README.md)和 [真实 Claude CLI 试跑](../../../examples/subagent-only-handoff/README.md)。
 
 ---
 
@@ -212,7 +212,7 @@ handoff agent 写 `handoff.md` 时，内容来自三个来源（可靠性高 →
 > **opencode runtime**：三处 runtime 差异已在 driver 边界抹平，breather 行为与 cc 一致——
 > - **token 归一**：opencode 原生 usage 是 `{input, output, cache:{write, read}}`，driver 把它归一成上面那套 Anthropic 形（`input/output → *_tokens`、`cache.write/read → cache_creation/read_input_tokens`），占比计算读同样的字段。
 > - **关掉 opencode 自带 compaction**：opencode 默认开 `compaction.auto`（~90% 就地总结，与 §1 讲的 auto-summarize 同类）。opsbot 经 `OPENCODE_CONFIG_CONTENT` 把它关掉——否则它会抢在 breather 阈值前压缩、并留下失真的压缩后 token 计数干扰检测。关掉后 breather 独占上下文管理。
-> - **`context_window` 对 opencode 是权威值（无 auto-detect 兜底）**：opencode 的 `modelUsage` 恒空（`context.py` 里 config 设了就用 config、没设才去读 modelUsage，而 opencode 的 `modelUsage` 永远是 `{}`），占比分母拿不到 cc 那种上报值。**cc** 清空 `context_window` 还能回落到它上报的窗口，**opencode** 清空只会扁平回落 200000、不会自动探测。所以这个值要**与你 opencode.json 实际跑的模型窗口对齐**：shipped 默认 `1000000`（按 1M 模型给）；换非 1M 模型时，在 web UI（Settings → Plugins → breather → context_window）或 `config.yaml` 改成实际窗口，否则占比按错的窗口算、breather 在错的点触发。
+> - **`context_window` 对 opencode 是权威值（无 auto-detect 回退）**：opencode 的 `modelUsage` 始终为空（`context.py` 里 config 设了就用 config、没设才去读 modelUsage，而 opencode 的 `modelUsage` 永远是 `{}`），占比分母拿不到 cc 那种上报值。**cc** 清空 `context_window` 还能回落到它上报的窗口，**opencode** 清空只会扁平回落 200000、不会自动探测。所以这个值要**与你 opencode.json 实际跑的模型窗口对齐**：shipped 默认 `1000000`（按 1M 模型给）；换非 1M 模型时，在 web UI（Settings → Plugins → breather → context_window）或 `config.yaml` 改成实际窗口，否则占比按错的窗口算、breather 在错的点触发。
 
 **检查方式**（`ContextTracker.check()`）：
 
@@ -224,7 +224,7 @@ handoff agent 写 `handoff.md` 时，内容来自三个来源（可靠性高 →
 
 ## 6. 配置
 
-`src/workflow_controller/plugins/breather/config.yaml`（当前默认）：
+`packages/plugins/breather/src/workflow_controller/plugins/breather/config.yaml`（当前默认）：
 
 ```yaml
 name: breather
@@ -294,7 +294,7 @@ breather 的交接文档默认是一份**通用结构**（阻塞项 / 如何接�
 | continuation prompt | `continuation_prompt_path` | 给接续 worker 的指令（读交接文档后怎么接续） | `RESUME_PROMPT` |
 
 
-交接指令只配置 `handoff_prompt_path` 一处；在同一文件中用 `<!-- workflow:main -->` 写主代理如何盘点自身工作、交接后如何重新派发仍在途的子代理（子代理自动交接关闭时无需此项），用 `<!-- workflow:group -->` 写每名子代理如何盘点自身工作；共同规则可放在 `<!-- workflow:common -->`。普通交接选共享段和 main 段；子代理整组交接选共享段和 group 段，若主代理同时越线再用 main 段指导主代理摘要。未分段的旧文件保持原样，只指导普通主代理交接，缺少主代理段时回退内置主代理指令；旧 `<!-- opsbot:... -->` 标记继续识别，已上传的旧文件无需重写。整组交接只在指令文件带 `<!-- workflow:... -->` 或旧标记分段时读取，未分段时沿用旧 `group_handoff_prompt_path` 或内置整组指令。文件里面向编辑者的 HTML 注释（`<!-- ... -->`）不会被注入交接 prompt。整组交接所需清单、文档路径和完成信号由系统追加，不要求用户在指令里重复描述。`continuation_prompt_path` 独立指导接续。设置页分别以 `workflow-handoff-instructions.md`、`workflow-continuation-instructions.md` 下载实际内置指令；源码在 `src/workflow_controller/plugins/breather/handoff.py`（`HANDOFF_AGENT_PROMPT`、`RESUME_PROMPT`）及 `group_handoff.py`（`GROUP_HANDOFF_PROMPT`）。
+交接指令只配置 `handoff_prompt_path` 一处；在同一文件中用 `<!-- workflow:main -->` 写主代理如何盘点自身工作、交接后如何重新派发仍在途的子代理（子代理自动交接关闭时无需此项），用 `<!-- workflow:group -->` 写每名子代理如何盘点自身工作；共同规则可放在 `<!-- workflow:common -->`。普通交接选共享段和 main 段；子代理整组交接选共享段和 group 段，若主代理同时越线再用 main 段指导主代理摘要。未分段的旧文件保持原样，只指导普通主代理交接，缺少主代理段时回退内置主代理指令；旧 `<!-- opsbot:... -->` 标记继续识别，已上传的旧文件无需重写。整组交接只在指令文件带 `<!-- workflow:... -->` 或旧标记分段时读取，未分段时沿用旧 `group_handoff_prompt_path` 或内置整组指令。文件里面向编辑者的 HTML 注释（`<!-- ... -->`）不会被注入交接 prompt。整组交接所需清单、文档路径和完成信号由系统追加，不要求用户在指令里重复描述。`continuation_prompt_path` 独立指导接续。设置页分别以 `workflow-handoff-instructions.md`、`workflow-continuation-instructions.md` 下载实际内置指令；源码在 `packages/plugins/breather/src/workflow_controller/plugins/breather/handoff.py`（`HANDOFF_AGENT_PROMPT`、`RESUME_PROMPT`）及 `group_handoff.py`（`GROUP_HANDOFF_PROMPT`）。
 
 同一份指令文件可这样写：
 
@@ -427,7 +427,7 @@ python .opsbot/handoff_tools.py extract_worker_narrative <project_dir> <session_
 ## 10. 架构与文件
 
 ```
-src/workflow_controller/plugins/breather/
+packages/plugins/breather/src/workflow_controller/plugins/breather/
 ├── config.yaml            插件配置（§6）
 ├── plugin.py              BreatherPlugin：触发入口 + finalize_handoff 主流程 + 状态机
 ├── context.py             ContextTracker：上下文占比计算（events 免 fork / command fallback）
@@ -454,5 +454,5 @@ src/workflow_controller/plugins/breather/
 | 交接文档内容陈旧/丢失本轮工作 | 检查新鲜度校验日志 `未在本轮更新 …（exists=…, started_at=…）`——agent 可能超时没写完，或写到了错路径 |
 | CLI runtime 下完全不触发 | 已由 loop 边界 check 解决（driver-agnostic）。若仍不触发，确认 breather 插件 enabled、orchestrator 注入了 hook（日志 `loading plugin breather`） |
 | 起 worker-h2 失败反复降级 | 看 `起 worker-h2 失败 — 不停旧 worker` 日志的异常栈；通常是 session 配置（runtime/auth/skills_path）问题 |
-| 调了 `force=true` 但没立刻 handoff | force 沿用等 stop 模式——只在 worker **下个自然停止点**才切，不是立即中断。看日志是否进了 pending（`force handoff for …`）；若 worker 调完 force 还在跑，handoff 推迟到它下次自然停止（watchdog 30min 兜底）。想尽快切就把 force 调用放在接近停止点的位置（如某步产物落盘后） |
+| 调了 `force=true` 但没立刻 handoff | force 沿用等 stop 模式——只在 worker **下个自然停止点**才切，不是立即中断。看日志是否进了 pending（`force handoff for …`）；若 worker 调完 force 还在跑，handoff 推迟到它下次自然停止（watchdog 30min 后备）。想尽快切就把 force 调用放在接近停止点的位置（如某步产物落盘后） |
 ```

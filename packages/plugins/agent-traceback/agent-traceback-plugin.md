@@ -1,6 +1,6 @@
 # Agent Traceback 插件开发者指南
 
-> 面向**想改 `src/workflow_controller/plugins/agent_traceback` 的开发者**。讲清两件事：
+> 面向**想改 `packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback` 的开发者**。讲清两件事：
 >
 > 1. **代码做了什么**——每个模块职责、关键调用链、不可破坏的不变量；
 > 2. **为什么这样写**——背后的设计权衡，便于改进时不踩坑。
@@ -23,7 +23,7 @@
 ## 1. 插件文件结构
 
 ```
-src/workflow_controller/plugins/agent_traceback/
+packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/
 ├── __init__.py            # 空
 ├── config.yaml            # 插件配置（见 §7）
 ├── plugin.py              # AgentTracebackPlugin：钩子入口 + 引擎/存储 per-project 缓存 + 重放/重建入口
@@ -145,7 +145,7 @@ POST /api/sessions/import-db {db_path, target_cwd}
 
 opencode 一条 assistant 消息可含多 part（reasoning + text + task）共享同一 `message_id`。part 级截断（只丢 task part）会留下同 message 的「我将调用 X」前置 text/reasoning——形成「孤儿文本」，worker 误以为自己已派过 X → 跳过 X。
 
-**message 级截断**（`l2_reader.read_main_session_parts` 的 `exclude_message_id`）丢弃该 message 的全部 part 及其之后，worker 看不到「我将调用 X」的声明，从上一条完整 message 自然续跑。`exclude_part_id` 仅作为 schema 漂移/旧 db 无 `message_id` 时的退化兜底。
+**message 级截断**（`l2_reader.read_main_session_parts` 的 `exclude_message_id`）丢弃该 message 的全部 part 及其之后，worker 看不到「我将调用 X」的声明，从上一条完整 message 自然续跑。`exclude_part_id` 仅作为 schema 漂移/旧 db 无 `message_id` 时的退化回退。
 
 ### 3.4 task part 的 `state.output` 必须含子 session id
 
@@ -156,7 +156,7 @@ if sub_agent_id in str((part.get("state") or {}).get("output", "")):
     return str(pid)   # ← 定位到截断点
 ```
 
-这是整个重放链路**最关键的一条不变量**：子 session id 必须出现在 task part 的 `state.output` 字符串里。`l2_transcriber` 对 `task` 工具显式兜底（`l2_transcriber.py:374-381`）——若 `resultJson` 不含子 session id，强制构造 `task_id: <sub_sid>\n<result>` 注入。
+这是整个重放链路**最关键的一条不变量**：子 session id 必须出现在 task part 的 `state.output` 字符串里。`l2_transcriber` 对 `task` 工具显式回退（`l2_transcriber.py:374-381`）——若 `resultJson` 不含子 session id，强制构造 `task_id: <sub_sid>\n<result>` 注入。
 
 ### 3.5 两个 git 仓严格分离
 
@@ -171,13 +171,13 @@ if sub_agent_id in str((part.get("state") or {}).get("output", "")):
 
 **快照不捕获项目 `.git`**，与实时 traceback 行为完全一致（实时时项目 `.git` 也被快照排除，fork 时由 `_init_git_sandbox` 从 origin 复制）。
 
-### 3.6 best-effort 契约
+### 3.6 best-effort 约定
 
 | 钩子 / 入口 | 调用方 | async? | 阻塞 worker? | 失败影响 |
 |---|---|---|---|---|
 | `on_subagent_start` | driver hook 调用栈 | 是 | **是**（管道背压） | 快照超时/失败 → `status=timeout`，仍继续 workflow |
 | `on_session_complete` | loop 完成回调 | 是 | 否（best-effort） | 落 `status=error`，不阻塞 loop |
-| `on_session_delete` | event_router 删除回调 | **否** | — | try/except 兜底，绝不抛 |
+| `on_session_delete` | event_router 删除回调 | **否** | — | try/except 回退，绝不抛 |
 | `run_traceback` | web API `POST /traceback` | 是 | 起 fork session 后即返回 | 失败返回 `{ok:false, error}` |
 | `import_session` | web API `POST /import-db` | 是 | 同步走完后返回 | 失败返回 `{ok:false, error}` |
 
@@ -201,7 +201,7 @@ if sub_agent_id in str((part.get("state") or {}).get("output", "")):
 
 - `_engines: dict[str, SnapshotEngine]`（`plugin.py:47`）：按 `Path(cwd).resolve()` 做 key 缓存 `SnapshotEngine`——与 `EventStoreRouter` 的 per-project 路由对称：同一 cwd 的 session 共用一个 engine（共用一个快照仓）。`_resolve_engine` 见 `plugin.py:189-210`。
 - `_cp_stores: dict[str, CheckpointStore]`（`plugin.py:50`）：按 db 路径缓存 `CheckpointStore`。
-- `_fork_roots: dict[str, str]`（`plugin.py:55`）：fork session_id → fork_root path 的 in-memory 生命周期追踪。`TracebackRunner.run()` 注册成功后登记；`on_session_delete` 取出 rmtree。**进程崩溃时此 map 丢失**——由启动期 `_reap_orphan_fork_roots`（`plugin.py:78-116`）按 TTL（默认 7 天）扫描 host tempdir 里的 `opsbot-tb-*` 目录兜底。活动集保护：reaper 跳过 pool 中且 `last_activity` 在 TTL 窗口内的 session 引用的 fork_root（liveness = `now - last_activity < TTL`），崩溃后 IDLE ghost 超 TTL 即回收。活动集不可判定（pool 枚举端口未装配或枚举失败）时该次启动整体跳过回收——liveness 保护不 fail-open，宁可孤儿目录堆积等下次可判定的启动再清。
+- `_fork_roots: dict[str, str]`（`plugin.py:55`）：fork session_id → fork_root path 的 in-memory 生命周期追踪。`TracebackRunner.run()` 注册成功后登记；`on_session_delete` 取出 rmtree。**进程崩溃时此 map 丢失**——由启动期 `_reap_orphan_fork_roots`（`plugin.py:78-116`）按 TTL（默认 7 天）扫描 host tempdir 里的 `opsbot-tb-*` 目录后备清理。活动集保护：reaper 跳过 pool 中且 `last_activity` 在 TTL 窗口内的 session 引用的 fork_root（liveness = `now - last_activity < TTL`），崩溃后 IDLE ghost 超 TTL 即回收。活动集不可判定（pool 枚举端口未装配或枚举失败）时该次启动整体跳过回收——liveness 保护不 fail-open，宁可孤儿目录堆积等下次可判定的启动再清。
 
 #### 重放 / 重建入口
 
@@ -251,7 +251,7 @@ def store_sync(self, cp):     with self._connect() as conn: conn.execute("INSERT
 - async 钩子内（`_snapshot_subagent_start` / `_snapshot_session_complete`）：用 async `store`；
 - 同步路径（web handler 列检查点、`on_session_delete` 删行、`TracebackRunner.run` 查 cp）：用 sync `get_sync` / `list_sync` / `delete_for_session`。
 
-`get_latest_subagent_stop_rowid_sync`（`checkpoint_store.py:177-201`）查的是核心 `events` 表（同库）的 SUBAGENT stop 事件 rowid，给 checkpoint 补 `event_rowid` 反向链接。`except sqlite3.OperationalError` 兜底 events 表尚未创建的场景。
+`get_latest_subagent_stop_rowid_sync`（`checkpoint_store.py:177-201`）查的是核心 `events` 表（同库）的 SUBAGENT stop 事件 rowid，给 checkpoint 补 `event_rowid` 反向链接。`except sqlite3.OperationalError` 回退处理 events 表尚未创建的场景。
 
 ### 4.4 `snapshot_engine.py` — 文件态快照引擎
 
@@ -287,11 +287,11 @@ git_ref = out.strip()
 
 ```python
 def restore(self, git_ref: str, dest_dir: Path) -> bool:
-    # 空检查点兜底：git ls-tree 前置兜底，无 working/ 条目 = 空文件态
+    # 空检查点回退：git ls-tree 前置回退，无 working/ 条目 = 空文件态
     # git archive <ref> working | tar -x --strip-components=1 -C dest_dir
 ```
 
-用管道 `git archive | tar -x` 而不是 `git checkout`：**不污染快照仓的工作树**，直接抽出某 ref 的整树到任意 dest_dir。`--strip-components=1` 剥掉 `working/` 前缀。空检查点兜底（`snapshot_engine.py:510-516`）是实时/重建共享 fix：首个 `subagent_start` 前若无 write，commit 不含 `working` tree 条目 → `git archive` 会失败，此情况视为「成功恢复空文件态」返回 True。
+用管道 `git archive | tar -x` 而不是 `git checkout`：**不污染快照仓的工作树**，直接抽出某 ref 的整树到任意 dest_dir。`--strip-components=1` 剥掉 `working/` 前缀。空检查点回退（`snapshot_engine.py:510-516`）是实时/重建共享 fix：首个 `subagent_start` 前若无 write，commit 不含 `working` tree 条目 → `git archive` 会失败，此情况视为「成功恢复空文件态」返回 True。
 
 #### 预览（`list_files` / `read_file`）
 
@@ -399,7 +399,7 @@ session = await orch.start_session_with_resume(
 self._plugin.register_fork_root(session.id, str(fork_root))  # 清理责任移交 on_session_delete
 ```
 
-`inherit_overlays_from`：继承 origin session 的 session-scoped subagent hints + 全局 instructions——否则在 origin 重放前注册的 hint 到不了新 replay session，re-called subagent 的 system prompt 会丢用户的诊断。成功后 `register_fork_root` 把 `fork_session_id → fork_root` 登记到 in-memory map，由 `on_session_delete` 在 fork session 被显式删除时 rmtree。进程崩溃残留由启动期 `_reap_orphan_fork_roots` 按 TTL 兜底。
+`inherit_overlays_from`：继承 origin session 的 session-scoped subagent hints + 全局 instructions——否则在 origin 重放前注册的 hint 到不了新 replay session，re-called subagent 的 system prompt 会丢用户的诊断。成功后 `register_fork_root` 把 `fork_session_id → fork_root` 登记到 in-memory map，由 `on_session_delete` 在 fork session 被显式删除时 rmtree。进程崩溃残留由启动期 `_reap_orphan_fork_roots` 按 TTL 后备清理。
 
 ### 4.7 `web_api.py` — FastAPI router
 
@@ -462,7 +462,7 @@ self._plugin.register_fork_root(session.id, str(fork_root))  # 清理责任移�
 
 `<thinking>` 块用正则 `_THINKING_RE = re.compile(r"<thinking>(?P<text>.*?)</thinking>", re.DOTALL | re.IGNORECASE)`（`l2_transcriber.py:34`）非贪婪匹配，跨行覆盖。正文 = 去掉所有 thinking 块后 `.strip()`，空正文不发 text part 避免噪声。
 
-**task part 的 `state.output` 必须含子 session id**（§3.4 硬约束）显式兜底（`l2_transcriber.py:327-336`）。同时把 `sub_sid → part_id` 记进 `task_part_ids` 映射，供检查点推导**预填** `main_part_id`——免得重放时再 `find_main_part_id_for_subagent` 查一次。
+**task part 的 `state.output` 必须含子 session id**（§3.4 硬约束）显式回退（`l2_transcriber.py:327-336`）。同时把 `sub_sid → part_id` 记进 `task_part_ids` 映射，供检查点推导**预填** `main_part_id`——免得重放时再 `find_main_part_id_for_subagent` 查一次。
 
 **全字段路径重写**：`L2Transcriber` 在转写时**必须把 `cannbot_origin_cwd/*` 字符串重写到 `target_cwd/*`**，覆盖**所有可能被 worker LLM 看到并复用的字段**——不止 `task` 工具的 `prompt`/`summary`/`output`，还包括：
 - `text` / `reasoning` part 的正文（worker 推理时会引用这些路径）
@@ -479,7 +479,7 @@ self._plugin.register_fork_root(session.id, str(fork_root))  # 清理责任移�
 
 **占位 project 行**（`l2_transcriber.py:466-491`）：opencode 真实 schema 的 `session.project_id` 是 NOT NULL FK 指向 `project.id`。转写器 upsert 一行占位 project（`worktree=target_cwd`、`name="[reconstructed] <basename>"`），让 session 行能 INSERT。
 
-**LoopConfig 从 checkpoints 推导**（`orchestrator._build_session_config`）：cannbot db 不存 opsbot `LoopConfig`，若仅依赖 `target_cwd/opsbot.yaml`，yaml 不存在时 `loop=None` → replay 时 `loop.py` 兜底 `max_iterations=10`，而检查点 `cp.iteration` 可能远大于 10（如 cp_025 iter=25）→ 首轮即触发 `max_iterations` 停。**解法**：import 时 `checkpoints` 已在手上（每个 `cp.iteration` 是主 agent 第 N 次 task 派发，最大值即原始 session 实际总轮数），`_build_session_config` 取 `max(最大 cp.iteration, 10)` 作为 `max_iterations`，构造非 None 的 `LoopConfig`。yaml 配了 `loop.max_iterations` 时 yaml 优先（用户显式覆盖）。replay 直接继承固化的 `config_json`，不再做任何修改。
+**LoopConfig 从 checkpoints 推导**（`orchestrator._build_session_config`）：cannbot db 不存 opsbot `LoopConfig`，若仅依赖 `target_cwd/opsbot.yaml`，yaml 不存在时 `loop=None` → replay 时 `loop.py` 默认 `max_iterations=10`，而检查点 `cp.iteration` 可能远大于 10（如 cp_025 iter=25）→ 首轮即触发 `max_iterations` 停。**解法**：import 时 `checkpoints` 已在手上（每个 `cp.iteration` 是主 agent 第 N 次 task 派发，最大值即原始 session 实际总轮数），`_build_session_config` 取 `max(最大 cp.iteration, 10)` 作为 `max_iterations`，构造非 None 的 `LoopConfig`。yaml 配了 `loop.max_iterations` 时 yaml 优先（用户显式覆盖）。replay 直接继承固化的 `config_json`，不再做任何修改。
 
 #### 4.8.3 `file_state_rebuilder.py` — 逐字节重放
 
@@ -517,7 +517,7 @@ git commit hash 保真（`file_state_rebuilder.py:255-290`）：git commit 的 h
 
 `CheckpointDeriver.derive`（`checkpoint_deriver.py:49-146`）输入：`timeline` / `file_states`（重放产出的 `CheckpointFileState` 列表，含 git_ref）/ `task_part_ids`（转写器产出的 `{subagent_sdk_id → main_task_part_id}`）/ `session_id` / `sdk_session_id` / `bridges`。
 
-按 `file_states` 里 `trigger=subagent_start` 的 `checkpoint_index` 顺序遍历，每条构造一个 `Checkpoint` 行；末尾追加 `trigger=session_complete` 终态检查点。**关键兜底**（`checkpoint_deriver.py:90-98`）：若 timeline 主 task 边界数 ≠ file_states 的 subagent_start 数（重放与转写偶尔对不齐），**以 file_states 为准**（重放才是真相）+ warning——避免 git_ref 错配。
+按 `file_states` 里 `trigger=subagent_start` 的 `checkpoint_index` 顺序遍历，每条构造一个 `Checkpoint` 行；末尾追加 `trigger=session_complete` 终态检查点。**关键回退**（`checkpoint_deriver.py:90-98`）：若 timeline 主 task 边界数 ≠ file_states 的 subagent_start 数（重放与转写偶尔对不齐），**以 file_states 为准**（重放才是真相）+ warning——避免 git_ref 错配。
 
 字段取值见 `checkpoint_deriver.py:148-171`。`checkpoint_id` 用 `cp_rc_` 前缀（rc=reconstructed），与实时的 `cp_<sid>_<n>` 命名空间隔离——便于 Dashboard 标识「这是重建出的检查点」+ 溯源 `birth_traceback.reconstructed_from`。`main_part_id` 预填（`task_part_ids[subagent_sdk_id]`）——免得重放时再 `find_main_part_id_for_subagent` 查一次。
 
@@ -536,12 +536,12 @@ cp_store = CheckpointStore(events_db_path)
 
 `db_path_for` 恒解析守护进程库，检查点写入与插件读路径（`plugin.py` 的
 `_cp_store_for_session`）同源。`opencode.db` / `snapshots/.git` / 项目 `.git`
-仍在 `<target_cwd>/.opsbot/` 下——会话态与文件态跟 cwd 走，账面与检查点跟
+仍在 `<target_cwd>/.opsbot/` 下——会话态与文件态跟 cwd 走，会话记录与检查点跟
 守护进程库走。
 
 **`_synthesize_historical_events`**（`orchestrator.py:363-538`）：重建 session 无实时 driver 事件流，但 front-end「概览」tab 从 events 表的 subagent/step_finish 事件派生数据。**以 InteractionBridge 为驱动源**（bridge 是派发关系的完备真相，覆盖主/子/孙全层级）：每条含 `subagentSessionId` 的 bridge → 一对 SUBAGENT 事件（start/stop），时间戳用 bridge 的 `dispatchTimestamp`/`responseTimestamp`（比派发 ToolCall 的 `startedAt`/`completedAt` 可靠——cpx db 的 ToolCall 完成时刻会被钉到 query 结束或塌缩成毫秒级），token 用 `subagentTokens`，类型/名称用 `subagentType`/`subagentName`（`agent_name` 进事件 data，前端拓扑 label 优先用它）；start 事件另携带 `parent_agent_id`（派发者 agent id，主 agent 派发为空串）供前端拓扑边层级化，父级真相取 timeline 派发条目的 `subagent_session_id`——其语义随 role 而异（子 agent 的 task 条目携带所属会话 id = 派发者；主 agent 的 task 条目携带被派发子会话 id，是检查点链路语义，不可当父级），bridge-only 场景（派发 ToolCall 行缺失）回退 `dispatchTurnId → Turn.subagentSessionId` 索引，两级均无时回退空串（挂到 main）——**不可用 `bridge.dispatchExecutionId` 判父级**（cpx 录制形态下恒指根 execution，孙 agent 的 bridge 也指向 main 的 execution）；timeline 里能定位到的派发 ToolCall 提供后备时间戳，start 的完整回退链为 `dispatchTimestamp → startedAt → completedAt → 子 agent 首条 timeline entry 的 ts`（子 turn `createdAt`——旧 db 的派发 ToolCall 两列时间戳可能均为 NULL，缺这级回退会让子代理节点整条从拓扑消失）。stop 的回退：bridge `status=completed` 或无 bridge（纯 timeline 驱动）时回退 `completedAt`、再退 start_ms（重建 session 是已跑完态，stop 缺失会让节点一直显示 running）；仅 bridge 声明未返回（`status=dispatched` 且无 `responseTimestamp`）→ 只发 start，节点由前端按 session 终态归档为 stopped。bridge 表整体缺失时回退纯 timeline 驱动（主 agent 每个 `task` tool call → 一对事件）。末尾一个 `STEP_FINISH` 事件，`num_turns` = 主 agent turn 数，`usage` 留 0。Phase 1.7 前合成的是 RESULT 事件；Phase 1.7 后改合成 `STEP_FINISH`，与 driver 产出对齐。
 
-> **拓扑层级（孙 agent 边层级化）**：嵌套派发（子 agent 派孙 agent）时，孙 agent 的 start 事件携带 `parent_agent_id`（见上），前端 `useTopology` 以它决定 dispatch 边的 `fromId`（字段缺失或父节点未注册时回退 `main`，兼容实时 driver 旧事件），`AgentTopologyGraph` 按 dispatch 边构建层级树：深度分行、tidy-tree 叶子槽位定位（父节点居中于子节点之上），孙 agent 渲染为其派发者的直接子节点，dispatch 边自真实父节点底部引出。实时路径（opencode runtime）由 driver 轮询器递归发现全层级后代并在 start 事件携带 `parent_agent_id`（`SubagentTracker` 透传），孙 agent 的 stop 在其父会话 part 流里检测补发——见 `docs/designs/opencode-support.md` §4.7；claude_sdk 实时事件暂无 parent 信息，孙 agent 仍挂 main（前端回退兼容）。
+> **拓扑层级（孙 agent 边层级化）**：嵌套派发（子 agent 派孙 agent）时，孙 agent 的 start 事件携带 `parent_agent_id`（见上），前端 `useTopology` 以它决定 dispatch 边的 `fromId`（字段缺失或父节点未注册时回退 `main`，兼容实时 driver 旧事件），`AgentTopologyGraph` 按 dispatch 边构建层级树：深度分行、tidy-tree 叶子槽位定位（父节点居中于子节点之上），孙 agent 渲染为其派发者的直接子节点，dispatch 边自真实父节点底部引出。实时路径（opencode runtime）由 driver 轮询器递归发现全层级后代并在 start 事件携带 `parent_agent_id`（`SubagentTracker` 透传），孙 agent 的 stop 在其父会话 part 流里检测补发——见 `../../../docs/ARCHITECTURE.md` §4.7；claude_sdk 实时事件暂无 parent 信息，孙 agent 仍挂 main（前端回退兼容）。
 
 ---
 
@@ -593,7 +593,7 @@ cp_store = CheckpointStore(events_db_path)
 | 路径重写：结构化 JSON walk + path-prefix-aware 字符串替换 | 路径字段做 resolve+prefix-match（防子串误伤）；所有字符串值覆盖（不限字段名）；非 origin_cwd 绝对路径显式不重写 | `l2_reader.py:531-616` |
 | `.opsbot` 在快照 ignore 列表 | 每个 fork 的 `.opsbot/` 全新 → opencode.db 独立 + 嵌套重放干净 | `snapshot_engine.py:34-47` |
 | `_init_git_sandbox` 复制 origin `.git` 后 `git remote rm` | 让 worker 继承完整 git 历史（log/diff 可用），但不带 remote（防 fetch 误连外部） | `traceback_runner.py:336-433` |
-| `_reap_orphan_fork_roots` 启动期按 TTL 扫 tempdir | 兜底进程崩溃/重启后 in-memory `_fork_roots` map 丢失的 fork_root 残留（每个 ~2GB） | `plugin.py:78-116` |
+| `_reap_orphan_fork_roots` 启动期按 TTL 扫 tempdir | 清理进程崩溃/重启后 in-memory `_fork_roots` map 丢失的 fork_root 残留（每个 ~2GB） | `plugin.py:78-116` |
 | 双形式 `store` / `store_sync` | async 钩子内 + 同步 web/删除路径都要用同一张表 | `checkpoint_store.py:124-175` |
 | `_active_plugin` per-request 解析 | 插件 runtime reload 后 API 端点仍落到活跃实例 | `web_api.py:22-35` |
 | 重放 = 逐字节回放 `argsJson`，非 LLM 重生成 | `write`/`edit` 内容与原始逐位一致——保真的根基 | `file_state_rebuilder.py:182-221` |
@@ -607,14 +607,14 @@ cp_store = CheckpointStore(events_db_path)
 | `env_overrides={XDG_DATA_HOME: target_cwd/.opsbot}` | 让 fork worker 子进程的 opencode.db 指向重建路径 | `orchestrator.py:360` |
 | 临时 session_id 占位 + `dataclasses.replace` 回填 | 避免「先 pool.create 再 derive」的循环依赖 | `orchestrator.py:136-147, 443-446` |
 | timeline 边界数 ≠ file_states 数时以 file_states 为准 | 重放才是真相，避免 git_ref 错配 | `checkpoint_deriver.py:90-98` |
-| `SnapshotEngine.restore` 空检查点兜底 | 首个检查点常为空（subagent 前 no write），实时/重建共享 fix | `snapshot_engine.py:510-516` |
+| `SnapshotEngine.restore` 空检查点回退 | 首个检查点常为空（subagent 前 no write），实时/重建共享 fix | `snapshot_engine.py:510-516` |
 | 重建产物与实时快照同构 | `TracebackRunner`/`web_api`/`CheckpointStore` 零改动复用 | `session_reconstructor/__init__.py` |
 
 ---
 
 ## 7. 配置项参考
 
-`src/workflow_controller/plugins/agent_traceback/config.yaml`：
+`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/config.yaml`：
 
 ```yaml
 name: agent_traceback
@@ -646,30 +646,28 @@ reconstruct:
 
 ## 8. 测试套件
 
-测试在 `tests/plugins/agent_traceback/`，13 个文件覆盖全部模块：
+测试在 `packages/plugins/agent-traceback/tests/`，13 个文件覆盖全部模块：
 
 ```bash
 # 全套（含重建子包）
-.venv/bin/python -m pytest tests/plugins/agent_traceback/ -q
+.venv/bin/python -m pytest packages/plugins/agent-traceback/tests/ -q
 # 期望：145 passed, 2 skipped（skip 的是需真实样例 db 的 test_sample_db_*）
 
 # 只跑重建相关
-.venv/bin/python -m pytest tests/plugins/agent_traceback/test_db_reader.py \
-  tests/plugins/agent_traceback/test_l2_transcriber.py \
-  tests/plugins/agent_traceback/test_file_state_rebuilder.py \
-  tests/plugins/agent_traceback/test_checkpoint_deriver.py \
-  tests/plugins/agent_traceback/test_reconstruct_orchestrator.py \
-  tests/plugins/agent_traceback/test_web_api_import.py \
-  tests/plugins/agent_traceback/test_reconstruct_e2e.py -v
+.venv/bin/python -m pytest packages/plugins/agent-traceback/tests/test_db_reader.py \
+  packages/plugins/agent-traceback/tests/test_l2_transcriber.py \
+  packages/plugins/agent-traceback/tests/test_file_state_rebuilder.py \
+  packages/plugins/agent-traceback/tests/test_checkpoint_deriver.py \
+  packages/plugins/agent-traceback/tests/test_reconstruct_orchestrator.py \
+  packages/plugins/agent-traceback/tests/test_web_api_import.py \
 
 # Lint + Typecheck（提交前必跑）
-.venv/bin/ruff check src/workflow_controller/plugins/agent_traceback/ \
-  src/workflow_controller/plugins/agent_traceback/session_reconstructor/
-.venv/bin/mypy src/workflow_controller/plugins/agent_traceback/ \
-  src/workflow_controller/plugins/agent_traceback/session_reconstructor/
+.venv/bin/ruff check packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/ \
+  packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/
+.venv/bin/mypy packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/ \
+  packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/
 ```
 
-**端到端测试** `test_reconstruct_e2e.py` 用合成 cannbot db（3 主 task + 3 子 agent + write/edit/git 命令 + 时间窗交错）跑完整重建链路，校验设计 §8 Phase 1 验收 #2/#3/#4 的 hermetic 等价——这是无真实样例 db 时验证重建链路完整性的最直接手段。
 
 改任何模块后**必须**：
 
@@ -689,7 +687,7 @@ reconstruct:
 
 1. **脚本包裹**：`python3 script.py` 把真实操作（git/文件产出）藏在脚本内部，首 token `python3` 掩断了判断。例如 `python3 git-checkpoint.py`（内部执行 `git checkout -b`/`git add`/`git commit`/`git tag`）会被跳过 → 项目 `.git` 缺所有 checkpoint commit + tag。
 2. **`cd` 前缀遮蔽**：`cd X && <cmd>` 是 shell 惯用法，但首 token `cd` 不在任何分类集合 → 整条命令跳过，即使 `&&` 后是 `git add .` 或 `mkdir build/`。
-3. **分类粒度不足**：`build_test_network` 是个大杂烩——把 `python3`/`make`/`pytest`/`curl`/`bash`/`cd` 兜底全扫进去，但 `python3 git-checkpoint.py`（产出 git 历史）与 `python3 -m pytest`（产出测试结果）性质完全不同。
+3. **分类粒度不足**：`build_test_network` 是个大杂烩——把 `python3`/`make`/`pytest`/`curl`/`bash`/`cd` 统一全扫进去，但 `python3 git-checkpoint.py`（产出 git 历史）与 `python3 -m pytest`（产出测试结果）性质完全不同。
 
 改进方向（详见深逻辑解析 §12）：
 
@@ -738,14 +736,14 @@ reconstruct:
 
 代码主入口：
 
-- 钩子与引擎/存储缓存：`src/workflow_controller/plugins/agent_traceback/plugin.py`
-- 快照引擎：`src/workflow_controller/plugins/agent_traceback/snapshot_engine.py`
-- 重放编排：`src/workflow_controller/plugins/agent_traceback/traceback_runner.py`
-- L2 读取与 seed：`src/workflow_controller/plugins/agent_traceback/l2_reader.py`
-- 检查点表：`src/workflow_controller/plugins/agent_traceback/checkpoint_store.py`
-- 重建编排：`src/workflow_controller/plugins/agent_traceback/session_reconstructor/orchestrator.py`
-- db 读取与时间线：`src/workflow_controller/plugins/agent_traceback/session_reconstructor/db_reader.py`
-- 对话态转写：`src/workflow_controller/plugins/agent_traceback/session_reconstructor/l2_transcriber.py`
-- 文件态重建：`src/workflow_controller/plugins/agent_traceback/session_reconstructor/file_state_rebuilder.py`
-- 检查点推导：`src/workflow_controller/plugins/agent_traceback/session_reconstructor/checkpoint_deriver.py`
-- Web API：`src/workflow_controller/plugins/agent_traceback/web_api.py`
+- 钩子与引擎/存储缓存：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/plugin.py`
+- 快照引擎：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/snapshot_engine.py`
+- 重放编排：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/traceback_runner.py`
+- L2 读取与 seed：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/l2_reader.py`
+- 检查点表：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/checkpoint_store.py`
+- 重建编排：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/orchestrator.py`
+- db 读取与时间线：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/db_reader.py`
+- 对话态转写：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/l2_transcriber.py`
+- 文件态重建：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/file_state_rebuilder.py`
+- 检查点推导：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/session_reconstructor/checkpoint_deriver.py`
+- Web API：`packages/plugins/agent-traceback/src/workflow_controller/plugins/agent_traceback/web_api.py`
