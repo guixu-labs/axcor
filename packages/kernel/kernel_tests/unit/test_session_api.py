@@ -22,10 +22,40 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from workflow_controller.api.session_api import ReviewerStartOverrides, SessionAPI, SessionInfo
+from workflow_controller.api.session_api import (
+    ReviewerStartOverrides,
+    SessionAPI,
+    SessionInfo,
+    WorkflowSessionOperationError,
+)
 from workflow_controller.config.settings import AppConfig, SessionConfig, SessionReviewerConfig
+from workflow_controller.core.runs import RunKind
 from workflow_controller.session.manager import SessionPool
 from workflow_controller.session.session import Session, SessionState
+
+
+async def test_stop_all_waits_for_direct_session_stop_and_rejects_workflow_member(monkeypatch):
+    """批量停止对每个会话执行归属校验，并等待已受理的停止完成。"""
+    stopped = []
+
+    async def stop_session(session_id):
+        await asyncio.sleep(0)
+        stopped.append(session_id)
+
+    orch = MagicMock()
+    orch.affiliation.resolve.side_effect = {"member": MagicMock(run_id="run"), "direct": None}.get
+    orch.run_store.get = AsyncMock(return_value=MagicMock(kind=RunKind.WORKFLOW))
+    orch.stop_session = AsyncMock(side_effect=stop_session)
+    api = SessionAPI(orch)
+    monkeypatch.setattr(
+        api, "list_sessions", lambda: [MagicMock(id="member"), MagicMock(id="direct")]
+    )
+
+    with pytest.raises(WorkflowSessionOperationError, match="run"):
+        await api.stop_all()
+
+    orch.stop_session.assert_awaited_once_with("direct")
+    assert stopped == ["direct"]
 
 
 def test_list_claude_sessions_discovers_other_user_home(tmp_path, monkeypatch):
@@ -544,10 +574,30 @@ def _orch_for_delete(cwd: str, stages: list) -> tuple[MagicMock, MagicMock, Magi
     orch = MagicMock()
     orch.pool = pool
     orch.event_router = er
+    orch.affiliation.resolve.return_value = None
     orch.stop_session = AsyncMock()
     orch.bus.emit = AsyncMock()  # SessionAPI.delete awaits bus.emit("session_delete")
     orch.reclaim_deleted_session_affiliation = AsyncMock()  # delete 在名册删除同点回收归属
     return orch, pool, er
+
+
+async def test_delete_rejects_workflow_member_before_cleanup(tmp_path):
+    """拒绝删除时保留会话、事件和阶段产物。"""
+    artifact = tmp_path / "spec.md"
+    artifact.write_text("spec", encoding="utf-8")
+    orch, pool, er = _orch_for_delete(str(tmp_path), [{"name": "spec", "artifact": "spec.md"}])
+    orch.affiliation.resolve.return_value = MagicMock(run_id="workflow-1")
+    orch.run_store.get = AsyncMock(return_value=MagicMock(kind=RunKind.WORKFLOW))
+
+    with pytest.raises(WorkflowSessionOperationError, match="workflow-1"):
+        await SessionAPI(orch).delete("s1")
+
+    orch.stop_session.assert_not_awaited()
+    pool.remove.assert_not_called()
+    orch.reclaim_deleted_session_affiliation.assert_not_awaited()
+    orch.bus.emit.assert_not_awaited()
+    er.delete_session.assert_not_called()
+    assert artifact.read_text(encoding="utf-8") == "spec"
 
 
 def test_delete_stops_worker_via_full_stop_path(tmp_path):
@@ -613,6 +663,7 @@ def test_delete_missing_session_is_safe(tmp_path):
     orch = MagicMock()
     orch.pool = pool
     orch.event_router = er
+    orch.affiliation.resolve.return_value = None
     orch.stop_session = AsyncMock()
     orch.bus.emit = AsyncMock()  # SessionAPI.delete awaits bus.emit("session_delete")
     orch.reclaim_deleted_session_affiliation = AsyncMock()

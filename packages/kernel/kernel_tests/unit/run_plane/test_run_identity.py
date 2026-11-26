@@ -1340,10 +1340,10 @@ class TestDeleteAffiliationReclaim:
         assert orch.affiliation.resolve(session.id) is None
         assert _runs_row_count(tmp_path) == 0
 
-    async def test_delete_keeps_explicit_session_row(self, orch, tmp_path, monkeypatch):
-        """删显式 run 成员 → 成员行与 run 都保留（调用方的记录，不连坐删）。"""
+    async def test_delete_keeps_container_session_row(self, orch, tmp_path, monkeypatch):
+        """删除容器会话后保留成员历史和 run。"""
         _fake_activate(orch, monkeypatch)
-        run = await orch.run_store.create("p", "dag-yaml@1")
+        run = await orch.run_store.create("p", "", kind=RunKind.CONTAINER)
         session = await orch.start_session_with_config(
             SessionConfig(name="n", cwd=str(tmp_path), run_id=run.run_id)
         )
@@ -1354,11 +1354,11 @@ class TestDeleteAffiliationReclaim:
         assert await orch.run_store.list_session_ids(run.run_id) == [session.id]
 
     async def test_delete_removes_roster_row_too(self, orch, tmp_path, monkeypatch):
-        """删除路径的归属与名册同事务：隐式与显式成员的名册行都清掉。"""
+        """删除隐式会话和容器会话均清理名册。"""
         import sqlite3
 
         _fake_activate(orch, monkeypatch)
-        run = await orch.run_store.create("p", "dag-yaml@1")
+        run = await orch.run_store.create("p", "", kind=RunKind.CONTAINER)
         implicit = await orch.start_session_with_config(SessionConfig(name="i", cwd=str(tmp_path)))
         explicit = await orch.start_session_with_config(
             SessionConfig(name="e", cwd=str(tmp_path), run_id=run.run_id)

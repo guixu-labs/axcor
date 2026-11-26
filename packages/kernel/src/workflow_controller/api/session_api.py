@@ -757,7 +757,10 @@ class SessionAPI:
 
     async def stop_all(self) -> None:
         sessions = self.list_sessions()
-        await asyncio.gather(*(self._orch.stop_session(s.id) for s in sessions))
+        results = await asyncio.gather(*(self.stop(s.id) for s in sessions), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def pause(self, session_id: str) -> None:
         await self._assert_session_writable(session_id)
@@ -841,6 +844,7 @@ class SessionAPI:
             raise ValueError(
                 f"clean_reconstruct must be 'workflow_controller', 'all', or None; got {clean_reconstruct!r}"
             )
+        await self._assert_session_writable(session_id)
         deleted: list[str] = []
         await self._delete_one(
             session_id,
