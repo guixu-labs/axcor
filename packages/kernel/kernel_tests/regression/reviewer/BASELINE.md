@@ -79,7 +79,7 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 1. 在 `fixtures/` 加 `NN_<kind>_<short>.yaml`（`kind` = `stop_hook` / `auq`）。
 2. 字段：`name` / `kind` / `description`（写清被测的决策逻辑）/ `worker_context`（stop）
    或 `auq_questions`（auq）/ `staged_disk` / `expected`。
-   `staged_disk` 可用路径列表生成通用文件和目录，或用「相对路径 → 正文或非负字节数」映射提供具体内容或指定生成文件的大小。
+   `staged_disk` 接受路径列表，为各路径准备通用文件或目录。也可使用「相对路径 → 正文或非负字节数」映射，指定文件正文或大小。
    用例自述提到可核对的章节或交付内容时，应提供与自述一致的正文，以免模拟文件的体量或内容影响判定。
 3. `expected`：STOP 用 `action` + `feedback_must_include` / `feedback_must_not_include`；
    AUQ 用 `action`（恒 block）+ `auq_must_select_one_of` / `auq_must_not_select`。
