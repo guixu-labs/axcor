@@ -37,7 +37,6 @@ import sqlite3
 from typing import Any
 
 from workflow_controller.transcript.opencode_store import (
-    BUSY_TIMEOUT_MS,
     normalize_part,
     open_ro_db,
     opencode_db_path,
@@ -102,59 +101,6 @@ def read_subagent_type(
     finally:
         con.close()
     return str(row[0]) if row and row[0] else ""
-
-
-def read_opencode_session_title(
-    sdk_session_id: str,
-    env: dict[str, str] | None = None,
-) -> str | None:
-    """Read the title of an opencode session. Best-effort; never raises."""
-    if not sdk_session_id:
-        return None
-    path = opencode_db_path(env)
-    if not path.is_file():
-        return None
-    con = open_ro_db(path)
-    if con is None:
-        return None
-    try:
-        row = con.execute(
-            "SELECT title FROM session WHERE id = ?",
-            (sdk_session_id,),
-        ).fetchone()
-    except sqlite3.Error:
-        return None
-    finally:
-        con.close()
-    return row[0] if row and row[0] else None
-
-
-def update_opencode_session_title(
-    sdk_session_id: str,
-    title: str,
-    env: dict[str, str] | None = None,
-) -> bool:
-    """Update the title of an opencode session. Best-effort; never raises."""
-    if not sdk_session_id or not title:
-        return False
-    path = opencode_db_path(env)
-    if not path.is_file():
-        return False
-    try:
-        con = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
-    except sqlite3.Error:
-        return False
-    try:
-        con.execute(
-            "UPDATE session SET title = ? WHERE id = ?",
-            (title, sdk_session_id),
-        )
-        con.commit()
-        return True
-    except sqlite3.Error:
-        return False
-    finally:
-        con.close()
 
 
 def read_subagent_parts(

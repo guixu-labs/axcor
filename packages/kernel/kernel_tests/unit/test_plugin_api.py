@@ -258,10 +258,6 @@ def test_list_plugins_attaches_run_panels_for_loaded_plugin(tmp_path: Path) -> N
             return None
 
         @staticmethod
-        def get_web_manifest() -> list:
-            return []
-
-        @staticmethod
         def get_run_panels() -> list[RunPanelDef]:
             return [
                 RunPanelDef(format="graph-yaml@1", component="graph.RunDagPanel", schema_version=2)
@@ -270,13 +266,10 @@ def test_list_plugins_attaches_run_panels_for_loaded_plugin(tmp_path: Path) -> N
     config_path = _write_plugin_config(tmp_path, "name: demo\nversion: 0.1.0\nenabled: true\n")
     plugin = _PanelPlugin()
 
-    entry = next(
-        e
-        for e in PluginAPI(
-            _orch(config_path, plugins=[plugin], plugins_dir=tmp_path)
-        ).list_plugins()
-        if e["name"] == "demo"
-    )
+    entries = PluginAPI(_orch(config_path, plugins=[plugin], plugins_dir=tmp_path)).list_plugins()
+    entry = next(e for e in entries if e["name"] == "demo")
+    # manifest 键是控制台判定「已装载」的标记：已装载插件恒带空列表
+    assert entry["manifest"] == []
     assert entry["run_panels"] == [
         {
             "format": "graph-yaml@1",

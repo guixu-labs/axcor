@@ -201,16 +201,7 @@ def _tool_call_row(
     }
 
 
-def _bridge_row(
-    dispatch_call_id: str,
-    sub_sid: str,
-    sub_type: str,
-    *,
-    at_dispatch: str | None = None,
-    at_response: str | None = None,
-    status: str = "completed",
-    tokens: int = 100,
-) -> dict[str, Any]:
+def _bridge_row(dispatch_call_id: str, sub_sid: str, sub_type: str) -> dict[str, Any]:
     """InteractionBridge 行字典（派发 ↔ 子会话的桥接记录）。"""
     return {
         "id": "b1",
@@ -219,10 +210,10 @@ def _bridge_row(
         "subagentSessionId": sub_sid,
         "subagentType": sub_type,
         "subagentName": None,
-        "subagentTokens": tokens,
-        "status": status,
-        "dispatchTimestamp": at_dispatch,
-        "responseTimestamp": at_response,
+        "subagentTokens": 100,
+        "status": "completed",
+        "dispatchTimestamp": None,
+        "responseTimestamp": None,
     }
 
 
@@ -235,16 +226,9 @@ def _insert(
     con.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholders})", values)
 
 
-def build_cannbot_db(
-    tmp_path: Path,
-    *,
-    framework: str = "opencode",
-    turns: list[dict[str, Any]] | None = None,
-    tool_calls: list[dict[str, Any]] | None = None,
-    bridges: list[dict[str, Any]] | None = None,
-) -> Path:
+def build_cannbot_db(tmp_path: Path, *, framework: str = "opencode") -> Path:
     """建一个最小可重建的 cannbot 源库：1 user + 1 assistant(task) + 子 write。"""
-    turns = turns or [
+    turns = [
         _turn_row("t1", content="do X", at="2026-07-16T12:00:00.000Z"),
         _turn_row(
             "t2",
@@ -270,7 +254,7 @@ def build_cannbot_db(
             at="2026-07-16T12:00:03.000Z",
         ),
     ]
-    tool_calls = tool_calls or [
+    tool_calls = [
         _task_call_row(
             "tc1",
             "t2",
@@ -290,7 +274,7 @@ def build_cannbot_db(
             end="2026-07-16T12:00:03.600Z",
         ),
     ]
-    bridges = bridges or [_bridge_row("call_main_task_1", "ses_sub_001", "developer")]
+    bridges = [_bridge_row("call_main_task_1", "ses_sub_001", "developer")]
     db = tmp_path / "cannbot.db"
     db.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db)
@@ -387,7 +371,6 @@ class ImportHarness:
         self.db_path = tmp_path / "events.db"
         self.created: list[Any] = []
         self.stored_events: list[Any] = []
-        self.persisted: list[Any] = []
         self.workspace_host = SessionWorkspaceHost(
             checkpoint_db_path=lambda: self.db_path,
             resolve_session=self._resolve_session,
@@ -427,7 +410,7 @@ class ImportHarness:
         return session
 
     async def _persist_session(self, session: Any) -> None:
-        self.persisted.append(session)
+        """落盘端口替身（本套件不断言落盘调用）。"""
 
     async def _store_events(self, events: list[Any]) -> None:
         self.stored_events.extend(events)

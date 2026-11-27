@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from workflow_controller.plugin.run_driver import StartProcess
 from workflow_controller.plugin.workspace import (
     IntegrationLineRetracted,
     PrepareScopeWorkspace,
@@ -284,37 +283,3 @@ def test_integrated_chain_target_missing_from_receipt_fails(tmp_path: Path) -> N
     assert "失效集不含目标" in (
         driver.handle_op("get_operation", {"operation_id": "co-1"})["error"] or ""
     )
-
-
-def test_integrated_chain_rebuilding_terminal_state_completes(tmp_path: Path) -> None:
-    """终态化收口（对齐批量链边界）：目标被失败传播置 failed 且无新工作区时
-    操作按终态收口记入操作记录，不悬挂。"""
-    driver = _all_passed_driver(tmp_path, ("a", "b"))
-    driver.handle_op(
-        "rollback_node",
-        {
-            "node_id": "a",
-            "client_op_id": "co-1",
-            "expected_epoch": 1,
-            "expected_root_epoch": 1,
-        },
-    )
-    decide(driver)
-    decide(
-        driver,
-        (_retracted_note((("a-w1", 2),), ("b-w1",)),),  # type: ignore[arg-type]
-    )
-    assert _op_phase(driver) == "rebuilding"
-    driver.state.set_node_status("a", "failed")
-    decide(driver)
-    op = driver.handle_op("get_operation", {"operation_id": "co-1"})
-    assert op["phase"] == "succeeded"
-    assert op["terminal_finalized"] == {"a": "failed"}
-
-
-def test_no_rollback_yet_advances_no_retract_action(tmp_path: Path) -> None:
-    """守门断言：未注册回滚时推进面不产回退动作（既有路径零变化）。"""
-    driver = _all_passed_driver(tmp_path, ("a",))
-    actions = decide(driver)
-    assert not pick(actions, RetractIntegrationLine)
-    assert not pick(actions, StartProcess)

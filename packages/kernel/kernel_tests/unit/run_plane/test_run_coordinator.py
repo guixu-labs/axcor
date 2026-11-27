@@ -592,20 +592,26 @@ class TestDriverGuards:
         await h.await_terminal(slow_b, timeout_s=10.0)
 
     async def test_unsupported_action_fails_run(self, tmp_path):
-        from workflow_controller.plugin.run_driver import SetRunLabel
+        from dataclasses import dataclass
+
+        from workflow_controller.plugin.run_driver import RunAction
+
+        @dataclass(frozen=True)
+        class OddAction(RunAction):
+            """协调器未实现的驱动动作。"""
 
         class OddDriver(FakeDriver):
             def decide(self, world, notifications):
                 if self.rounds == 0:
                     self.rounds += 1
-                    return [SetRunLabel(label="x")]
+                    return [OddAction()]
                 return super().decide(world, notifications)
 
         h = Harness(tmp_path, FakeFactory("odd@1", OddDriver()))
         run_id = await h.start("odd@1")
         status = await h.await_terminal(run_id)
         run = await h.store.get(run_id)
-        assert status == "failed" and "SetRunLabel" in run.error
+        assert status == "failed" and "OddAction" in run.error
 
 
 # ── 应答通道与投影 ────────────────────────────────────────────────

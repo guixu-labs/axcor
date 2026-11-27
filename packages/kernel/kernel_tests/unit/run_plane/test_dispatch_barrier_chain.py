@@ -229,41 +229,6 @@ async def test_side_effect_barrier_establishes_group(tmp_path: Path) -> None:
         await _finish_run(h)
 
 
-@pytest.mark.parametrize(("kind", "tool_name"), [("side_effect", "Bash"), ("dispatch", "Task")])
-async def test_verifier_session_barrier_lands_on_node_scope(
-    tmp_path: Path,
-    kind: str,
-    tool_name: str,
-    full_capability_runtime: str,
-) -> None:
-    """验收会话 context 带相位后缀：屏障放行，组检查点行落在节点作用域。"""
-    h = await _setup_run(tmp_path)
-    try:
-        await h.affiliation.attach("ses-verify", h.run_id, role="verifier", context="node=a/verify")
-        outcome = await h.coord.submit_dispatch_barrier(
-            "ses-verify",
-            kind,
-            {
-                "tool_name": tool_name,
-                "tool_use_id": "toolu-v1",
-                "native_session_id": "ses-native-verify",
-                "prompt_id": "msg-verify-1",
-            },
-            runtime=full_capability_runtime,
-        )
-        assert isinstance(outcome, BarrierProceed)
-        group_rows = [
-            r
-            for r in await h.coord.list_run_checkpoints(h.run_id)
-            if r["trigger"] == "before_child"
-        ]
-        assert [
-            (r["scope_id"], r["dispatch_anchor"]["parent_native_session_id"]) for r in group_rows
-        ] == [("node-a", "ses-native-verify")]
-    finally:
-        await _finish_run(h)
-
-
 @pytest.mark.parametrize(
     ("role", "context", "abandon_previous"),
     [

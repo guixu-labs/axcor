@@ -44,7 +44,6 @@ from workflow_controller.plugin.workspace import (
     IntegrateScope,
     IntegrationLineRetracted,
     PrepareScopeWorkspace,
-    RestoreCommitted,
     RetractIntegrationLine,
     RetractTarget,
     ScopeAbandoned,
@@ -244,40 +243,6 @@ async def test_prepare_builds_real_workspace_and_replies(tmp_path: Path) -> None
     assert (workspace / "design" / "base.md").read_text(encoding="utf-8") == "base\n"
     assert (work_root / ".workflow-controller" / "scopes" / run_id / "repo.git").is_dir()
     assert not _notes_of(h.driver, WorkspaceActionFailed)
-
-
-async def test_second_prepare_reuses_initialized_tree(tmp_path: Path) -> None:
-    """同 run 第二个建区复用已建树与根作用域：两个工作区互为独立检出。"""
-    work_root = tmp_path / "root"
-    work_root.mkdir()
-
-    def plan(driver: ProbeDriver) -> list[RunAction] | None:
-        if len(_notes_of(driver, ScopeWorkspacePrepared)) >= 2:
-            return None
-        if _notes_of(driver, ScopeWorkspacePrepared):
-            return [
-                PrepareScopeWorkspace(
-                    config=_tree_config(work_root),
-                    scope_key="node-b",
-                    client_op_id="op-2",
-                    context="node=b",
-                )
-            ]
-        return [
-            PrepareScopeWorkspace(
-                config=_tree_config(work_root),
-                scope_key="node-a",
-                client_op_id="op-1",
-                context="node=a",
-            )
-        ]
-
-    h = BridgeHarness(tmp_path, plan)
-    await h.start_and_finish()
-
-    prepared = _notes_of(h.driver, ScopeWorkspacePrepared)
-    assert [p.scope_id for p in prepared] == ["node-a", "node-b"]
-    assert prepared[0].workspace_path != prepared[1].workspace_path
 
 
 async def test_duplicate_scope_key_replies_failure(tmp_path: Path) -> None:
@@ -736,31 +701,6 @@ async def test_quiesce_failure_emits_fault_and_fails_action(tmp_path: Path) -> N
     assert len(events) == 1
     assert events[0]["action"] == "PrepareScopeWorkspace"
     assert "闸门未能静止" in events[0]["error"]
-
-
-async def test_restore_committed_action_accepted(tmp_path: Path) -> None:
-    """恢复确认动作被宿主接受（核心重建闸门接线前为纯确认，无回执）。"""
-    work_root = tmp_path / "root"
-    work_root.mkdir()
-    emitted = {"done": False}
-
-    def plan(driver: ProbeDriver) -> list[RunAction] | None:
-        if emitted["done"]:
-            return None
-        emitted["done"] = True
-        return [
-            RestoreCommitted(
-                scope_id="node-a",
-                client_op_id="co-1",
-                context="node=a",
-            )
-        ]
-
-    h = BridgeHarness(tmp_path, plan)
-    await h.start_and_finish()  # 派发不被拒即接受；run 正常收口
-
-    assert emitted["done"]
-    assert not _notes_of(h.driver, WorkspaceActionFailed)
 
 
 async def test_run_api_lists_scopes_and_checkpoints(tmp_path: Path) -> None:

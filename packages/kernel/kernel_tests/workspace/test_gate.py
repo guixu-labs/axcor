@@ -46,12 +46,9 @@ async def test_quiesce_reaches_stillness_then_unfreezes() -> None:
 
     assert outcome is QuiesceOutcome.QUIESCED
     assert gate.state is GateState.QUIESCED
-    with pytest.raises(ScopeGateError):
-        gate.ensure_writes_allowed()
 
     gate.resume_running()
     assert gate.state is GateState.RUNNING
-    gate.ensure_writes_allowed()
 
 
 async def test_parent_blocked_failure_fails_fast() -> None:
@@ -116,8 +113,6 @@ async def test_gate_rejects_illegal_transitions() -> None:
     gate.begin_quiescing()
     with pytest.raises(ScopeGateError):
         gate.begin_quiescing()
-    with pytest.raises(ScopeGateError):
-        gate.ensure_writes_allowed()
 
     fresh = ScopeGate(background_drain_timeout_s=1.0)
     await fresh.quiesce(_drained_writer, parent_blocked_on_result=False)

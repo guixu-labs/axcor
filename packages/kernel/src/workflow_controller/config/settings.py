@@ -80,15 +80,6 @@ class SessionReviewerConfig(BaseModel):
     thinking_budget_tokens: int = 2048
     task_goal: str = DEFAULT_TASK_GOAL
 
-    # 删除：旧插件/外部调用方仍可能使用旧布尔字段；全部迁移到 thinking_mode 后删除。
-    @property
-    def thinking_enabled(self) -> bool:
-        return self.thinking_mode == "enabled"
-
-    @thinking_enabled.setter
-    def thinking_enabled(self, value: bool) -> None:
-        self.thinking_mode = "enabled" if value else "disabled"
-
     @model_validator(mode="before")
     @classmethod
     def migrate_thinking_enabled(cls, data: Any) -> Any:

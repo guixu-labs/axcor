@@ -80,7 +80,6 @@ async def test_create_scopes_record_fields_and_epochs() -> None:
     assert subagent.gate_state is ScopeGateState.RUNNING
     assert subagent.root_epoch == 1
 
-    assert [child.scope_id for child in await tree.list_children("node-a")] == ["agent-1"]
     assert [item.scope_id for item in await tree.list_descendants("run-root")] == [
         "node-a",
         "agent-1",

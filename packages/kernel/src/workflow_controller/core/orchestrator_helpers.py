@@ -311,32 +311,6 @@ def _build_run_attached_event(session_id: str, run_id: str) -> Event:
     )
 
 
-def _build_session_end_event(session_id: str, end_state: str) -> Event:
-    return Event.create(
-        session_id=session_id,
-        iteration=0,
-        event_type=EventType.LOG_AUTO,
-        data={"action": "session_ended", "state": end_state},
-    )
-
-
-def _build_session_failed_event(
-    session_id: str,
-    reason: str,
-    traceback_text: str,
-) -> Event:
-    return Event.create(
-        session_id=session_id,
-        iteration=0,
-        event_type=EventType.LOG_AUTO,
-        data={
-            "action": "session_failed",
-            "reason": reason[:400],
-            "traceback": traceback_text[:2000] if traceback_text else "",
-        },
-    )
-
-
 def _build_session_complete_event(session_id: str) -> Event:
     return Event.create(
         session_id=session_id,

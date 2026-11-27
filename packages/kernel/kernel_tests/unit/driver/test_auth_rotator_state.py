@@ -83,22 +83,6 @@ def test_legacy_forced_api_in_state_file_migrates_to_api(tmp_path: Path) -> None
     assert rotator.get_reset_at() is None
 
 
-def test_auto_switch_does_not_invoke_loop_engine_hook(tmp_path: Path) -> None:
-    """Detector-driven switches do NOT kill the worker — claude CLI is already
-    dying. Only manual force_mode triggers mid-iter restart.
-    """
-    env_file = tmp_path / ".env"
-    env_file.write_text("ANTHROPIC_API_KEY=sk\n", encoding="utf-8")
-    rotator = AuthRotator(state_path=tmp_path / "state.json", env_path=env_file)
-    called = []
-    rotator.set_loop_engine_hook(lambda: called.append(True))
-    rotator.on_limit_detected(
-        LimitMatch(scope="5h", source="generic_5h"),
-        reset_at=datetime.now(tz=UTC) + timedelta(hours=4),
-    )
-    assert called == []
-
-
 def test_on_rate_limit_5h_switches_to_api_with_reset_at(tmp_path: Path) -> None:
     """5h 限流切 API 模式并记录恢复时间。"""
     env_file = tmp_path / ".env"

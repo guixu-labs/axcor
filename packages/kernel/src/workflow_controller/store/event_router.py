@@ -25,7 +25,6 @@ loop_results 与 run 键事件同库直写。
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,8 +39,6 @@ if TYPE_CHECKING:
 
     # 归属解析器：session_id → 归属（打戳唯一入口，归属缓存的热路径查找）
     RunStamper = Callable[[str], "SessionRunAffiliation | None"]
-
-logger = logging.getLogger(__name__)
 
 # SSE 全局通道单拍推送 run 键事件的行数上限：突发输出分多拍推送，单拍内存/序列化有界，
 # 游标只推进到已读的最大 id，余量交下一拍补齐（与前端 cursor 分页语义对齐）
@@ -62,9 +59,6 @@ class EventStoreRouter:
         self._default_project_dir = Path(default_project_dir)
         self._stores: dict[str, EventStore] = {}
         self._run_stamper: RunStamper | None = None
-        # Generic session-delete callbacks (plugins register to clean their own
-        # tables/rows). Dispatched at the end of delete_session, best-effort.
-        self._session_delete_callbacks: list[Callable[[str], None]] = []
 
     @property
     def db_path(self) -> Path:
@@ -85,24 +79,6 @@ class EventStoreRouter:
     def set_run_stamper(self, stamper: RunStamper | None) -> None:
         """注入归属解析器：session 键事件写库前按归属缓存补 run 维度。"""
         self._run_stamper = stamper
-
-    def known_db_paths(self) -> list[Path]:
-        return [self.db_path]
-
-    def db_path_for(self, session_id: str) -> Path:
-        """守护进程库路径（插件自开连接的寻址面）。"""
-        return self.db_path
-
-    def register_session_delete_callback(
-        self,
-        cb: Callable[[str], None],
-    ) -> None:
-        """Register a callback invoked at the end of delete_session.
-
-        Used by the orchestrator to dispatch ``on_session_delete`` to plugins so
-        they can clean plugin-owned tables (e.g. checkpoints). Best-effort.
-        """
-        self._session_delete_callbacks.append(cb)
 
     async def store(self, event: Event) -> None:
         self._stamp_run(event)
@@ -163,17 +139,6 @@ class EventStoreRouter:
         连行删；显式成员的行删走本 store 的 delete_roster。
         """
         self._store().delete_session(session_id)
-        # Notify registered callbacks (e.g. plugins cleaning their own tables).
-        # Best-effort: never let a plugin failure break the core delete.
-        for cb in self._session_delete_callbacks:
-            try:
-                cb(session_id)
-            except Exception:
-                logger.debug(
-                    "session delete callback raised for %s",
-                    session_id[:12],
-                    exc_info=True,
-                )
 
     def read_session_birth_traceback(self, session_id: str) -> dict[str, Any] | None:
         """读 sessions 表行的 birth_traceback（须在该行被删前调用）。"""
@@ -273,14 +238,8 @@ class EventStoreRouter:
     def list_sessions_sync(self) -> list[dict[str, Any]]:
         return self._store().list_sessions_sync()
 
-    async def update_session_state(self, session_id: str, state: str, **kwargs: Any) -> None:
-        await self._store().update_roster_state(session_id, state, **kwargs)
-
     async def update_loop_status(self, session_id: str, loop_status: str, **kwargs: Any) -> None:
         await self._store().update_roster_loop_status(session_id, loop_status, **kwargs)
-
-    async def update_session_name(self, session_id: str, name: str) -> None:
-        await self._store().update_roster_name(session_id, name)
 
     def update_session_name_sync(self, session_id: str, name: str) -> None:
         self._store().update_roster_name_sync(session_id, name)

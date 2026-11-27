@@ -156,7 +156,7 @@ EventBus 内部是 **拦截器链（inline）+ 观察者队列（async）** 的�
   - **拦截器通道**：控制事件（`stop_requested`/`pre_tool_use`/`iteration_boundary`/`gate_question`/`session_delete`/`SUBAGENT_START`）走 `emit()` 时的 **inline 链**，按 priority 降序逐个 await，首个返回非 `pass` 的 `InterceptResult` 即短路，`emit()` 把它返回给调用方。用于"可否决"的决策点，**同步阻塞调用方**——决策结果要回流给 driver/loop（如 stop hook 的 allow/deny）。
   - **观察者通道**：观察事件（TOOL_RESULT/SUBAGENT_{START,PROGRESS,STOP}/ITERATION_START/RATE_LIMIT/LOG_* 等）走 `asyncio.Queue` + 单后台 task `_process_observers` **串行派发**。观察者只读不决、不影响控制流，故**异步、不阻塞 emit**。
 - **`emit()` 的三步**（`event_bus.py:98`）：(1) `store_router.store` 持久化 → (2) `_run_interceptors` 跑拦截器链（inline，可能返回 `InterceptResult`）→ (3) 事件入 `_observer_queue`。故观察者拿到的事件一定已落盘且拦截器已跑完。
-- **类型化订阅**：`observe(event_type, handler)` 按 event_type 字符串键登记（`EventType` 取 `.value`，控制事件直接用字符串）；**无 catch-all `subscribe`**——需要全量订阅用 `observe_all(handler)`（`"*"` 键）。旧 EventBridge 的 `subscribe(callback)` 已移除。
+- **类型化订阅**：`observe(event_type, handler)` 按 event_type 字符串键登记（`EventType` 取 `.value`，控制事件直接用字符串）；**无 catch-all `subscribe`**——需要全量订阅用 `observe("*", handler)`。旧 EventBridge 的 `subscribe(callback)` 已移除。
 - **拦截器 priority**：`intercept(event_type, handler, *, priority=0)`，priority 大者先跑。插件拦截器 priority=10、reviewer 拦截器 priority=0——插件优先于 reviewer。
 - **无 unsubscribe**：`observe`/`intercept` 只 append，无移除 API。插件卸载后回调留在列表里，但回调内部检查 `_orchestrator is None` 后早返回，不会崩溃。
 - **不 flush 观察者队列**：`stop()` 直接 cancel `_process_observers` task，队列里残留事件丢弃。
@@ -218,14 +218,11 @@ EventBus 内部是 **拦截器链（inline）+ 观察者队列（async）** 的�
 |------|----|------|
 | `emit(event)` | — | **主入口**：store 持久化 → 跑拦截器链 → 跑 awaited observer → 入普通观察者队列；返回 `InterceptResult \| None`（仅控制事件非空） |
 | `observe(event_type, handler)` | — | 普通观察者类型化订阅：append 到 `_observers[type_key]` |
-| `observe_all(handler)` | — | 普通观察者通配订阅：append 到 `_observers["*"]`，收到所有事件 |
 | `observe_awaited(event_type, handler)` | — | awaited observer 类型化订阅：append 到 `_awaited_observers[type_key]` |
 | `observe_all_awaited(handler)` | — | awaited observer 通配订阅：append 到 `_awaited_observers["*"]`，在 `emit()` 返回前收到所有事件 |
-| `detach_observer(event_type, handler)` | — | 移除指定类型（包括 `"*"`）的普通观察者 |
 | `detach_awaited_observer(event_type, handler)` | — | 移除指定类型（包括 `"*"`）的 awaited observer |
 | `intercept(event_type, handler, *, priority=0)` | — | 拦截器订阅：append 到 `_interceptors[type_key]` 并按 priority 降序排序 |
 | `detach_interceptor(event_type, handler)` | — | 移除指定类型的拦截器 |
-| `register_type(td)` | — | 注册自定义事件类型到 `EventTypeRegistry`（内置类型已预注册） |
 | `start()` | — | 创建 `_process_observers` task（仅普通观察者派发） |
 | `stop()` | — | cancel processor task——**不 flush 队列，残留普通观察者事件丢弃** |
 

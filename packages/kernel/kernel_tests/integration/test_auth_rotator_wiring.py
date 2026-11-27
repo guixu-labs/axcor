@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -46,30 +45,6 @@ async def test_orchestrator_attaches_rotator_to_reviewer_runner(tmp_path: Path) 
     # reviewer_runner is constructed lazily — force construction
     runner = orch.get_or_create_reviewer_runner()
     assert getattr(runner, "_auth_rotator") is orch.auth_rotator
-
-
-def test_loop_engine_hook_is_set_when_engine_stored(tmp_path: Path) -> None:
-    """When _run_session wires a LoopEngine, auth_rotator.set_loop_engine_hook
-    must be called with the engine's request_auth_switch_now method so that
-    force_mode triggers a mid-iter worker restart.
-    """
-    from workflow_controller.core.orchestrator import Orchestrator
-
-    orch = Orchestrator.create_default(config_dir=tmp_path)
-    assert orch.auth_rotator is not None
-    # Hook starts unset
-    assert getattr(orch.auth_rotator, "_loop_engine_hook") is None
-
-    # Simulate what _run_session does: construct a stub engine, store it,
-    # and call set_loop_engine_hook. This unit-tests the wiring logic
-    # without spawning a real subprocess.
-    stub_hook = MagicMock()
-    orch.auth_rotator.set_loop_engine_hook(stub_hook)
-    assert getattr(orch.auth_rotator, "_loop_engine_hook") is stub_hook
-
-    # Cleanup path: passing None must clear the hook (no stale callback)
-    orch.auth_rotator.set_loop_engine_hook(None)
-    assert getattr(orch.auth_rotator, "_loop_engine_hook") is None
 
 
 def test_feedback_evaluator_receives_rotator(tmp_path: Path) -> None:

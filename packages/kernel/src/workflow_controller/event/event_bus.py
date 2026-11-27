@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from workflow_controller.session.events import Event
 
 if TYPE_CHECKING:
-    from workflow_controller.event.type_registry import EventTypeDef, EventTypeRegistry
+    from workflow_controller.event.type_registry import EventTypeRegistry
     from workflow_controller.store.event_router import EventStoreRouter
 
 logger = logging.getLogger(__name__)
@@ -98,18 +98,12 @@ class EventBus:
             with contextlib.suppress(asyncio.CancelledError):
                 await processor
 
-    def register_type(self, td: EventTypeDef) -> None:
-        self._registry.register(td)
-
     def observe(self, event_type: Any, handler: Observer) -> None:
         self._observers[self._type_key(event_type)].append(handler)
 
     def observe_awaited(self, event_type: Any, handler: Observer) -> None:
         """Register an inline observer that completes before ``emit`` returns."""
         self._awaited_observers[self._type_key(event_type)].append(handler)
-
-    def observe_all(self, handler: Observer) -> None:
-        self._observers["*"].append(handler)
 
     def observe_all_awaited(self, handler: Observer) -> None:
         """Register an inline observer for every event type."""
@@ -138,14 +132,6 @@ class EventBus:
         if not chain:
             return
         self._interceptors[key] = [(p, h) for p, h in chain if h != handler]
-
-    def detach_observer(self, event_type: Any, handler: Observer) -> None:
-        """按 handler 匹配移除观察者（见 :meth:`detach_interceptor`）。"""
-        key = self._type_key(event_type)
-        handlers = self._observers.get(key)
-        if not handlers:
-            return
-        self._observers[key] = [h for h in handlers if h != handler]
 
     def detach_awaited_observer(self, event_type: Any, handler: Observer) -> None:
         """按 handler 匹配移除 inline awaited 观察者。"""

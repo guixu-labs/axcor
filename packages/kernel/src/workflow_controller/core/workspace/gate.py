@@ -98,11 +98,6 @@ class ScopeGate:
         self._transition(GateState.QUIESCING)
         self._failure_reason = None
 
-    def ensure_writes_allowed(self) -> None:
-        """写入安排前置校验：闸门静止中一律拒绝。"""
-        if self._state is not GateState.RUNNING:
-            raise ScopeGateError(f"闸门静止中，拒绝新写入安排：{self._state.value}")
-
     async def quiesce(
         self,
         drain_background_writers: Callable[[], Awaitable[None]],

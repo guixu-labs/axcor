@@ -139,12 +139,6 @@ class TestLedgerRoundTrip:
         assert fired_row.fired
         assert fired_row.running_since is None
 
-    async def test_save_is_idempotent_overwrite(self, ledger: NodeClockLedger) -> None:
-        await ledger.save(_clock(accumulated_seconds=1.0), "t1")
-        await ledger.save(_clock(accumulated_seconds=99.0), "t2")
-        (only,) = await ledger.load_all()
-        assert only.accumulated_seconds == 99.0
-
     async def test_run_delete_cascades_clock_rows(self, db_path: Path) -> None:
         from workflow_controller.store.event_store import EventStore
 

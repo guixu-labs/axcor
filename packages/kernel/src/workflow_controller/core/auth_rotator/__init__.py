@@ -118,7 +118,6 @@ class AuthRotator:
         self._config_dir = state_path.parent
 
         self._quota_warning_callbacks: list[Callable[..., None]] = []
-        self._loop_engine_hook: Callable[[], None] | None = None
 
         snapshot = self._state_store.load()
         self._mode: AuthMode = snapshot.mode
@@ -276,9 +275,6 @@ class AuthRotator:
     def get_reset_at(self) -> datetime | None:
         return self._reset_at
 
-    def get_key_store_path(self) -> Path:
-        return self._key_store.path
-
     def has_key(self) -> bool:
         """Backward compat: check if any key is available via legacy store or providers."""
         return self.has_available_provider()
@@ -286,13 +282,6 @@ class AuthRotator:
     def has_available_provider(self) -> bool:
         """Check if any provider is available (not exhausted/invalid)."""
         return any(p.status in (KeyStatus.UNUSED, KeyStatus.ACTIVE) for p in self._providers)
-
-    def get_active_provider(self) -> AuthProvider:
-        if 0 <= self._active_index < len(self._providers):
-            return self._providers[self._active_index]
-        return AuthProvider(
-            provider_type=AuthProviderType.API_KEY, key=None, status=KeyStatus.UNUSED
-        )
 
     def get_active_provider_index(self) -> int:
         return self._active_index
@@ -867,36 +856,6 @@ class AuthRotator:
         )
         return True
 
-    def rotate_to_first_available(self) -> bool:
-        """Scan all providers, skip current, switch to the first available one.
-
-        Scans from index 0 upwards. Skips the active index. Any provider
-        with status UNUSED or ACTIVE qualifies.
-        Returns True if a rotation occurred, False if no other provider
-        is available (stuck on current).
-        """
-        if not self._providers:
-            return False
-        current = self._active_index
-        for i, p in enumerate(self._providers):
-            if i == current:
-                continue
-            if p.status in (KeyStatus.UNUSED, KeyStatus.ACTIVE):
-                self._set_active(i)
-                logger.info(
-                    "rotate_to_first_available: %d (%s) → %d (%s)",
-                    current,
-                    self._providers[current].provider_type.value,
-                    i,
-                    p.provider_type.value,
-                )
-                return True
-        logger.warning(
-            "rotate_to_first_available: %d stuck — no other provider available",
-            current,
-        )
-        return False
-
     def sync_providers_from_config(self) -> None:
         """Rebuild the providers list from settings.conf (the single source of
         truth for keys/models), preserving per-key runtime status.
@@ -1091,21 +1050,6 @@ class AuthRotator:
             result.append(item)
             provider_index += 1
         return result
-
-    def rotate_key(self) -> bool:
-        """Rotate to next available API key. Returns True if rotated."""
-        self._cancel_reset_task()
-        self._reset_at = None
-        for i in range(1, len(self._providers)):
-            idx = (self._active_index + i) % len(self._providers)
-            if self._providers[idx].status in (KeyStatus.UNUSED, KeyStatus.ACTIVE):
-                self._set_active(idx)
-                self._fire_loop_engine_hook()
-                return True
-        return False
-
-    def set_loop_engine_hook(self, hook: Callable[[], None] | None) -> None:
-        self._loop_engine_hook = hook
 
     def set_quota_warning_callback(self, cb: Callable[..., None]) -> None:
         self._quota_warning_callbacks.append(cb)
@@ -2088,14 +2032,6 @@ class AuthRotator:
                 return False
             return provider.worker_validation.status != ValidationStatus.INVALID
         return provider.reviewer_validation.status != ValidationStatus.INVALID
-
-    def _fire_loop_engine_hook(self) -> None:
-        """轮换生效后触发 LoopEngine 回调（回调失败只记日志不阻断）。"""
-        if self._loop_engine_hook is not None:
-            try:
-                self._loop_engine_hook()
-            except Exception:
-                logger.exception("LoopEngine hook failed")
 
 
 class _ProbeSettings(NamedTuple):

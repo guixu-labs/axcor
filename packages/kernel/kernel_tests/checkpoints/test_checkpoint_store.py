@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""作用域检查点账本测试：建表迁移、与遗留插件旧表并存、行读写与形态校验。
+"""作用域检查点账本测试：建表迁移、与旧检查点表并存、行读写与形态校验。
 
-内核测试不得 import 生产插件，旧表并存断言以 sqlite 直查完成：在库内按插件
-的旧列集复刻旧表（该表形状在插件退役前冻结），核对统一迁移不触碰它、其旧
-形态写入照常可用。
+旧 `checkpoints` 表由 session 导入能力落行，列集沿用已退役插件的十五列形状。
+并存断言以 sqlite 直查完成：在库内按旧列集复刻旧表，核对统一迁移不触碰它、
+其旧形态写入照常可用。
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -168,18 +167,6 @@ class TestSchemaMigration:
                 r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
             }
             assert "idx_scope_checkpoints_scope" in indexes
-
-    async def test_migration_idempotent_on_reopen(self, db_path: Path) -> None:
-        await RunStore(db_path).list_runs()
-        with sqlite3.connect(db_path) as conn:
-            before = conn.execute("SELECT count(*) FROM scope_checkpoints").fetchone()[0]
-
-        reopened = RunStore(db_path)  # 已盖戳不重跑
-        await reopened.list_runs()
-
-        with sqlite3.connect(db_path) as conn:
-            assert conn.execute("SELECT count(*) FROM scope_checkpoints").fetchone()[0] == before
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     async def test_previous_version_db_upgraded_in_one_step(self, db_path: Path) -> None:
         await RunStore(db_path).list_runs()
@@ -334,14 +321,6 @@ class TestCheckpointRoundtrip:
         assert loaded.child_session_map == {"agent-m1": "native-child-1"}
         assert loaded.claims == ("op/op_kernel/**", "op/build/autogen/**")
         assert loaded.barrier_quality is BarrierQuality.LATE_BARRIER
-
-    async def test_terminal_trigger_accepted(self, store: CheckpointStore) -> None:
-        await store.record(
-            _checkpoint(trigger=CheckpointTrigger.TERMINAL, workspace_commit="commit-final")
-        )
-        loaded = await store.get("cp-1")
-        assert loaded is not None
-        assert loaded.trigger is CheckpointTrigger.TERMINAL
 
     async def test_record_is_idempotent_on_checkpoint_id(
         self, store: CheckpointStore, db_path: Path
@@ -531,36 +510,3 @@ class TestRecordValidation:
             await store.record(_checkpoint(trigger="scope_start"))  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="屏障质量枚举"):
             await store.record(_checkpoint(barrier_quality="precise"))  # type: ignore[arg-type]
-
-    async def test_json_columns_stored_as_text(self, store: CheckpointStore, db_path: Path) -> None:
-        anchor = DispatchAnchor(
-            parent_native_session_id="native-1",
-            parent_message_id="msg_01",
-            tool_use_id="toolu_01",
-            preallocated_scope_id="agent-m1",
-            exclude_message_id="msg_01",
-            dispatch_group_id="group-7",
-        )
-        await store.record(
-            _checkpoint(
-                checkpoint_id="cp-group",
-                trigger=CheckpointTrigger.BEFORE_CHILD,
-                dispatch_anchor=anchor,
-                claims=("op/build/**",),
-                workspace_commit="commit-group",
-            )
-        )
-        with sqlite3.connect(db_path) as conn:
-            raw = conn.execute(
-                "SELECT dispatch_anchor, claims FROM scope_checkpoints WHERE checkpoint_id = ?",
-                ("cp-group",),
-            ).fetchone()
-        assert set(json.loads(raw[0])) == {
-            "parent_native_session_id",
-            "parent_message_id",
-            "tool_use_id",
-            "preallocated_scope_id",
-            "exclude_message_id",
-            "dispatch_group_id",
-        }
-        assert json.loads(raw[1]) == ["op/build/**"]

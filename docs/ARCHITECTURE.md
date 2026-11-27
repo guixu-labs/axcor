@@ -232,7 +232,7 @@ class RunRecord:
 ```
 
 - **生命周期**：`Orchestrator.start_run(program_ref, program_path, *, params, labels)`
-  mint run_id → 按程序 format 查格式派发表 → 拉起对应解释器 → 立即返回（不等跑完）；
+  mint run_id → 按程序 format 查格式派发表 → 拉起对应驱动 → 立即返回（不等跑完）；
   `finish_run(run_id, status, error=None)` 是 run 终态回写的**唯一通道**（解释器收尾都走
   它；stop 路由与崩溃恢复也复用），同态幂等、换态拒绝、对 kind=implicit 拒绝服务；
   `RunStore.update_status(run_id, status)` 只做非终态迁移（pending/running/paused），
@@ -264,10 +264,10 @@ class RunRecord:
   shim 显式解析）且不设在数据根内——数据根只装 Workflow Controller 记录
   （program/export），agent 文件产物（work_dir 内）的删除不归宿主管，
   delete_run 删除面 = 账面 + 数据根。
-- **格式派发表**：`FormatInterpreter` 协议住 plugin SDK（`start(run, program_path, params)`
-  / `stop(run_id)`），Plugin 子类可选覆写 `get_format_interpreters()` 登记
-  `{format: 解释器}`；core 经 SDK 协议查注册表，不 import 具体插件（依赖门禁）。
-  未登记格式 start_run 明确报错（格式是开放集合，定制格式的解释器走同一接口注册）。
+- **格式派发表**：`RunDriverFactory` 协议住 plugin SDK（`create` / `restore`），Plugin 子类可选覆写
+  `get_run_driver_factories()` 登记 `{format: 工厂}`，`PluginRegistry.run_driver_factories()` 合并、
+  同格式被多个插件登记当场报错；core 经 SDK 协议查注册表，不 import 具体插件（依赖门禁）。
+  未登记格式 start_run 明确报错（格式是开放集合，定制格式的驱动走同一接口注册）。
 - **公共 API**：`POST /api/v1/runs`（201 + run_id）、`GET /api/v1/runs/{id}`（状态 +
   sessions[]）、`GET /api/v1/runs/{id}/state`（过程详情：节点状态 + 全节点依赖表 edges + 产物文件清单 + 数据根绝对路径
   root——读 run 数据根的 run-state.json 与目录列表，那是解释器写盘的持久真相（断点
@@ -309,7 +309,7 @@ class RunRecord:
 ### 装配序（组合根成文）
 
 - 装配权归 `core_api.boot()`：RunCoordinator 在 `await orch.start()` 之后、`create_core_api` 之前构造（两者之间是天然装配位）。
-- RunCoordinator 显式持有五引用：`orchestrator`（session 平面）、`run_store`（账面）、`bus`（事件）、`plugin_registry`（驱动工厂表——经**独立派发面** `get_run_driver_factories()` 获取，与 interpreter 启动器契约（`get_format_interpreters()`）分离、同一注册键不承载两种语义；core 不 import plugins，依赖门禁不破）、`affiliation`（归属服务，中立基础设施）。
+- RunCoordinator 显式持有五引用：`orchestrator`（session 平面）、`run_store`（账面）、`bus`（事件）、`plugin_registry`（驱动工厂表——经 `get_run_driver_factories()` 获取，格式是唯一的派发键；core 不 import plugins，依赖门禁不破）、`affiliation`（归属服务，中立基础设施）。
 - orchestrator 仍可代为构造 session 侧服务（构造顺序便利），但章程上它只是持有者不是所有者；boot 恢复链由 RunCoordinator 而非 orchestrator 执行（插件装载完成后调用 `run_coordinator.recover_at_boot()`——此时驱动工厂才存在）。
 - boot 恢复序（组合根单处排序）：`orch.start()`（名册装载）→ 归属服务自有恢复（缓存重建 + 崩溃窗口补铸 + 正向孤儿回收）→ RunCoordinator 构造 → `recover_at_boot()`。恢复服务按步拆分（名册成员对账 / 分类判定 / 驱动重建 / 续跑拉起），每步按名可跳过（`skip` 名单，启动路径排障用；无驱动 run 的状态重算随 `restore` 步名跳过）；恢复扫描含隐式 run（崩溃后 ghost 投影要重算）；无驱动 run 的容器重估在 boot 形态用 ghost 谓词（ghost 无活 runtime，陈旧 loop_status=yes 不保非终态；idle+user_pause 可恢复断点豁免——与隐式投影的 state 判据同源）；名册成员对账先于账面守卫（runs 族表缺失的升级库不漏 reviewer 重建，恢复仍不造库）；run 级与成员级对账循环共用同一幂等重入骨架（逐项隔离失败，整轮可重放）。
 - 关停走同一条装配通道：组合根把协调器关停登记为 orchestrator 的 shutdown 步骤（`register_shutdown_step`），在 session 运行时与池停止之前执行；关停不落终态，非终态 run 由下次 boot 恢复链接续。
@@ -506,12 +506,12 @@ entry_points 插件没有本地 `config.yaml`：`PluginConfig` 由注册表构�
 ### Plugin SDK（`plugin/sdk.py`）
 
 ```python
-from workflow_controller.plugin.sdk import Plugin, PluginTabDef, StopHookResult, IterationGateResult, plugin_router
+from workflow_controller.plugin.sdk import Plugin, StopHookResult, IterationGateResult, plugin_router
 ```
 
 ### PluginContext
 
-`PluginContext`（`plugin/context.py`）是 plugin 唯一的宿主接入点，由 `PluginRegistry.load` / `reload_plugin` 构造并注入。字段：`bus` / `type_registry` / `hook_server` / `work_dir` / `services`。`services` 是宿主向 plugin 暴露的能力端口对象，plugin 经它调用需要穿透到宿主内部（`event_router` / `pool` 等）的操作——plugin 不持有宿主对象，绕过端口直访宿主成员会触发属性边界门禁（direct-orchestrator-access / no-host-private-access），新代码必须经 `services` 端口。端口族覆盖：session 查询/枚举/启停/等待/落盘、事件读取与批量写入、事件库寻址、在途 subagent 查询、驱动创建、插件实例解析、交接链谱系读写（后继/前驱/交接关系/loop 状态记录）、CLI session ID 反解、hook 配置写入、全局 runtime 与起始 prompt、最近项目清单。`PluginRegistry` 在构造 ctx 时从 orchestrator 装配 services；SDK 基类的拦截翻译助手（stop / iteration 边界）也经 `services.find_session` 取 session，不触碰 orchestrator 对象。守护进程事件库所在目录同样经端口暴露（`services.events_project_dir()`，指向 `event_router.project_dir`）——plugin 侧的外部读库方（如 breather 注入 handoff prompt 的 narrative 读库路径）经此寻址。
+`PluginContext`（`plugin/context.py`）是 plugin 唯一的宿主接入点，由 `PluginRegistry.load` / `reload_plugin` 构造并注入。字段：`bus` / `type_registry` / `hook_server` / `work_dir` / `services`。`services` 是宿主向 plugin 暴露的能力端口对象，plugin 经它调用需要穿透到宿主内部（`event_router` / `pool` 等）的操作——plugin 不持有宿主对象，绕过端口直访宿主成员会触发属性边界门禁（direct-orchestrator-access / no-host-private-access），新代码必须经 `services` 端口。端口族覆盖：session 查询/枚举/启停/等待/落盘、事件读取与批量写入、在途 subagent 查询、驱动创建、插件实例解析、交接链谱系读写（后继/前驱/交接关系/loop 状态记录）、CLI session ID 反解、全局 runtime 与起始 prompt。`PluginRegistry` 在构造 ctx 时从 orchestrator 装配 services；SDK 基类的拦截翻译助手（stop / iteration 边界）也经 `services.find_session` 取 session，不触碰 orchestrator 对象。守护进程事件库所在目录同样经端口暴露（`services.events_project_dir()`，指向 `event_router.project_dir`）——plugin 侧的外部读库方（如 breather 注入 handoff prompt 的 narrative 读库路径）经此寻址。
 
 ### Plugin 能力
 
@@ -521,20 +521,19 @@ from workflow_controller.plugin.sdk import Plugin, PluginTabDef, StopHookResult,
 | FastAPI 路由（浏览器） | `get_web_router()` | :18600 |
 | Stop-hook 拦截 | `on_stop_hook(session_id, session) → StopHookResult` | — |
 | Iteration-boundary gate | async `on_iteration_boundary(session_id, session, iter) → IterationGateResult` | loop 边界 |
-| Subagent-start 拦截 | `bus.intercept(SUBAGENT_START, handler)`（阻塞冻文件态） | — |
 | Session-delete 拦截 | `bus.intercept("session_delete", handler)`（inline，sync 清理） | — |
-| Session-complete 观察者 | `bus.observe("session_complete", handler)`（fire-and-forget） | — |
 | 观察者 hook（TOOL_RESULT/NOTIFICATION/ITERATION_START/ITERATION_END 等） | `bus.observe(event_type, handler)` 自注册（无基类 `on_*` 观察方法） | — |
-| Web tab + actions | `get_web_manifest()` | Web |
 | run 驱动面板贡献 | `get_run_panels()`（format → 前端组件 id + 投影 schema_version 上限，经 /api/plugins 下发） | Web |
+
+`GET /api/v1/plugins` 的条目对已装载插件恒带 `manifest: []` 键：它不再承载内容，只是控制台判定「插件已装载」的标记键（按键在场判定）。
 
 ### hook 自注册（拦截器 + 观察者，不由 orchestrator 集中代理）
 
 > **reviewer 拦截器不是 plugin**：reviewer 的 4 个控制事件拦截器（`stop_requested` / `pre_tool_use` / `iteration_boundary` / `gate_question`）由 orchestrator 在 `start()` 构造 `ReviewerInterceptor`（`core/reviewer.py`）并注册（priority=0）；orchestrator 另注册一个 priority=5 的 `_on_stop_pre` 拦截器处理 staged deferral 短路（交接类收尾由 plugin 自带的 let_exit 回调承担）。三层 priority band：plugin ≥ 10 / orchestrator pre-stop = 5 / reviewer = 0。
 
-EventBus 提供三种互不混用的投递语义：`intercept` 是按优先级串行执行、允许返回控制结果并短路的决策链；`observe_awaited` / `observe_all_awaited` 是由发布者等待全部 handler 完成的 inline 广播；`observe` / `observe_all` 是入队后由后台 processor 消费的异步广播。两类 observer 都先按注册顺序执行事件类型对应的 handler，再执行通配 handler；它们都没有控制权，单个 handler 的普通异常只记录日志并继续广播，调用任务的取消不被吞掉。`emit` 的固定顺序为持久化事件、执行 interceptor、执行 awaited observer、将事件加入后台 observer 队列，最后向发布者返回拦截结果。
+EventBus 提供三种互不混用的投递语义：`intercept` 是按优先级串行执行、允许返回控制结果并短路的决策链；`observe_awaited` / `observe_all_awaited` 是由发布者等待全部 handler 完成的 inline 广播；`observe` 是入队后由后台 processor 消费的异步广播（通配订阅用 `observe("*", handler)`）。两类 observer 都先按注册顺序执行事件类型对应的 handler，再执行通配 handler；它们都没有控制权，单个 handler 的普通异常只记录日志并继续广播，调用任务的取消不被吞掉。`emit` 的固定顺序为持久化事件、执行 interceptor、执行 awaited observer、将事件加入后台 observer 队列，最后向发布者返回拦截结果。
 
-插件**自行**把覆盖的 `on_stop_hook` / `on_pre_tool_use` / `on_iteration_boundary` 注册成 `EventBus` 控制事件**拦截器**，把观察者 hook（TOOL_RESULT / NOTIFICATION / ITERATION_START / ITERATION_END / session_complete 等）注册成 `EventBus` 类型化**观察者**——**不再由 orchestrator 集中遍历 `_plugin_registry` 代注册/派发**。落点在 `Plugin` 基类的**唯一**生命周期入口 `install(ctx)`：它是 concrete 方法，默认 body 捕获 `self._ctx = ctx` 并派发两个 opt-in 扩展点 `_register_interceptors(ctx)` / `_register_observers(ctx)`（默认空）。只做 bus 接线、不需 setup 的插件只 override 相关 helper、**不** override `install`；需要 setup（hook 路由 / 状态 / 类型化 `bus.observe` 订阅）的插件 override `install`，调 `super().install(ctx)` 保留 bus 接线，再做自己的 setup。基类不再提供旧式 `install(orchestrator, hook_server)` 入口——`install` / `install_ctx` 双入口已合并成一个 `install(ctx)`：
+插件**自行**把覆盖的 `on_stop_hook` / `on_iteration_boundary` 注册成 `EventBus` 控制事件**拦截器**，把观察者 hook（TOOL_RESULT / NOTIFICATION / ITERATION_START / ITERATION_END / session_complete 等）注册成 `EventBus` 类型化**观察者**——**不再由 orchestrator 集中遍历 `_plugin_registry` 代注册/派发**。落点在 `Plugin` 基类的**唯一**生命周期入口 `install(ctx)`：它是 concrete 方法，默认 body 捕获 `self._ctx = ctx` 并派发两个 opt-in 扩展点 `_register_interceptors(ctx)` / `_register_observers(ctx)`（默认空）。只做 bus 接线、不需 setup 的插件只 override 相关 helper、**不** override `install`；需要 setup（hook 路由 / 状态 / 类型化 `bus.observe` 订阅）的插件 override `install`，调 `super().install(ctx)` 保留 bus 接线，再做自己的 setup。基类不再提供旧式 `install(orchestrator, hook_server)` 入口——`install` / `install_ctx` 双入口已合并成一个 `install(ctx)`：
 
 ```python
 # plugin/base.py — install 是唯一生命周期入口（concrete，默认派发 helpers）
@@ -590,7 +589,7 @@ def _register_interceptors(self, ctx):
     ctx.bus.intercept("iteration_boundary", self._on_iteration_boundary_intercept, priority=10)
 ```
 
-> **检查点重放与会话导入（内核能力）**：单会话回溯（检查点、重放、导入）由内核 `core/session_traceback.py` 与 `core/restore/` 承载——重放按源会话配置、原生 session ID 与 L2 文件判定源 runtime 并校验同 runtime 续跑；Claude 系源会话从 JSONL 找到检查点前匹配的 Agent 调用，截断后改写 session ID 与路径，写入 fork 独立的配置目录；OpenCode 源走隔离 `opencode.db`。历史快照仓（`.workflow-controller/snapshots`）按目录约定直连读取，旧 `checkpoints` 表经兼容读取器访问。
+> **检查点重放与会话导入（内核能力）**：单会话回溯（检查点、重放、导入）由内核 `core/session_traceback.py` 与 `core/restore/` 承载——重放按源会话配置、原生 session ID 与 L2 文件判定源 runtime 并校验同 runtime 续跑；Claude 系源会话从 JSONL 找到检查点前匹配的 Agent 调用，截断后改写 session ID 与路径，写入 fork 独立的配置目录；OpenCode 源走隔离 `opencode.db`。历史快照仓（`.workflow-controller/snapshots`）按目录约定直连读取，旧 `checkpoints` 表经兼容读取器访问。`SessionTracebackHost` 的宿主端口（会话查找、持久化记录读、resume 起 session、事件批量写、hook 配置写等）由 `Orchestrator` 构造时直接注入，不经 `PluginServices`；旧 `agent_traceback` 插件独占的 SDK 端口与回调（持久化记录读、事件库寻址、创建/resume 起 session、hook 配置写入、runtime 解析、最近项目移除，以及 `EventStoreRouter` 的插件自开连接寻址面与 session 删除回调注册面）随插件退役一并删除。
 
 > **session 删除清理链路**：`SessionAPI.delete` 在 `pool.remove` 前捕获 `birth_traceback` 透传进 `session_delete` 事件 data（溯源载荷；消费面在路由/清理侧）——
 > - **重放 fork session**（`birth_traceback.fork_root`）：fork 隔离 tempdir 的孤儿清理由内核启动期 `WorkspaceResidueReaper`（`core/workspace/residue_reaper.py`）承接——tempdir 前缀 `workflow-controller-tb-*`、近期活动会话引用的目录受保护，超 TTL 回收；工作区残留树（`.workflow-controller/scopes/<sid>/`）与检查点行同点回收。
@@ -600,7 +599,7 @@ def _register_interceptors(self, ctx):
 
 **翻译归插件、副作用归框架**——这是本重构的核心边界，避免 orchestrator 反向 import plugin SDK 的结果类型：
 
-- **翻译层（`Plugin._on_*_intercept`，plugin 层 owns）**：把 `StopHookResult` / `PreToolUseResult` / `IterationGateResult` 翻成 `InterceptResult` + 调度插件自己的 `on_let_exit` 回调 + 日志。**纯翻译，不碰框架内部状态**。
+- **翻译层（`Plugin._on_*_intercept`，plugin 层 owns）**：把 `StopHookResult` / `IterationGateResult` 翻成 `InterceptResult` + 调度插件自己的 `on_let_exit` 回调 + 日志。**纯翻译，不碰框架内部状态**。
 - **副作用层（orchestrator 的控制事件消费点 owns）**：`_decide_stop` / `_decide_pre_tool_use` / `_run_iteration_boundary_gates` 拿到 `InterceptResult` 后做框架级反应——经 `HookDecisionEmitter`（`core/reviewer.py`）发 `LOG_AUTO` 决策事件、`SingleLoopEngine.mark_reviewer_let_exit`。reviewer 的 LLM 判定编排（`_run_llm_stop_review` / `_run_nl_question_review`）移入 `ReviewerInterceptor`，副作用（`mark_reviewer_let_exit` / `schedule_retry` / `inject_prompt`）仍经 `ReviewerHost` 回调 orchestrator。插件不再伸手进 `single_loop`。
 
 `InterceptResult` 的 action 语义（控制事件链的通用契约，plugin 与 reviewer 共用）：
@@ -713,7 +712,7 @@ AuthRotator
 │   reviewer_validation 分别记录真实 driver / Anthropic HTTP 检测结果、
 │   配置指纹、检查时间和脱敏错误。探测错误先替换密钥、规整空白；内存及即时验证结果保留全文供诊断。所有 auth_state.json 写入路径统一将 Worker/Reviewer 错误限制在 10K 字符，避免上游大响应使状态文件无界膨胀；重新加载的超限错误在下一次保存时按上限截断。两种能力互不连坐。
 │
-├── 查询：get_mode / get_active_provider / get_provider_count /
+├── 查询：get_mode / get_provider_count /
 │         get_available_count / get_exhausted_count / get_providers /
 │         get_key_status_dict / has_key / has_available_provider
 ├── env 透传：build_env / env_for_driver（SDK 白名单四 key，见 Driver 段）
@@ -724,14 +723,13 @@ AuthRotator
 │           第一次使用前检测，不在进程启动时批量调用模型。
 │           设置页按行重测通过独立接口指定 provider 序号并以 force=True
 │           跳过验证缓存；现有 /auth/test 仍检测当前 active provider。
-├── 轮转：rotate_to_first_available / rotate_to_next_key / rotate_key /
-│         schedule_pending_resets（退避后自动恢复 key）
+├── 轮转：rotate_to_next_key / schedule_pending_resets（退避后自动恢复 key）
 ├── 写入：set_keys / delete_provider / set_api_key / set_api_config / set_global_settings /
 │         sync_providers_from_config
 ├── 限流回调：on_limit_detected / on_rate_limit / on_quota_warning /
-│            set_loop_engine_hook / set_quota_warning_callback
+│            set_quota_warning_callback
 │
-├── LimitDetector → 订阅 EventBus（bus.observe_all），**单路径**消费 RATE_LIMIT
+├── LimitDetector → 订阅 EventBus（bus.observe(RATE_LIMIT)），**单路径**消费 RATE_LIMIT
 │   的归一化 `limit_signal`（kind: allowed/warning/rejected/auth_error/unknown →
 │   quota 回调 / on_rate_limit / on_limit_detected / no-op）；driver 负责把
 │   上游错误翻译成 signal，detector 不再做 driver 专属解析（文本正则 / dict

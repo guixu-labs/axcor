@@ -46,7 +46,6 @@ class Harness:
         self.original = tmp_path / "proj"
         self._make_original()
         self.sessions: dict[str, Any] = {}
-        self.persisted: list[str] = []
         self.stopped: list[str] = []
         self.started: list[dict[str, Any]] = []
         self.transcript_sources: dict[str, Path] = {}
@@ -122,7 +121,7 @@ class Harness:
         return self.sessions.get(session_id)
 
     async def _persist_session(self, session: Any) -> None:
-        self.persisted.append(str(session.id))
+        """落盘端口替身（本套件不断言落盘调用）。"""
 
     async def _stop_session(self, session_id: str) -> None:
         self.stopped.append(session_id)
@@ -654,7 +653,7 @@ async def test_live_view_missing_session_rejected(tmp_path):
 
 
 async def test_workspace_mode_only(tmp_path):
-    """snapshot 兼容模式在内核通道显式拒绝（由插件承载）。"""
+    """snapshot 兼容模式已随旧插件退役，内核通道显式拒绝。"""
     from workflow_controller.core.session_workspace import SessionWorkspaceError
 
     h = Harness(tmp_path)
@@ -662,8 +661,3 @@ async def test_workspace_mode_only(tmp_path):
     with pytest.raises(SessionWorkspaceError):
         await h.host.prepare_session(session)
     assert not h.tree_dir("sess-1").exists()
-
-
-async def test_scope_state_vocab(tmp_path):
-    """词面在场断言：作用域状态枚举（防误删导入）。"""
-    assert ScopeState.ACTIVE

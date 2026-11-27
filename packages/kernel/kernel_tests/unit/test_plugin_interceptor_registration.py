@@ -35,7 +35,6 @@ from workflow_controller.plugin.base import (
     IterationGateResult,
     Plugin,
     PluginConfig,
-    PreToolUseResult,
     StopHookResult,
 )
 from workflow_controller.plugin.context import PluginContext
@@ -82,14 +81,6 @@ class _StopPlugin(_Base):
         ctx.bus.intercept("stop_requested", self._on_stop_intercept, priority=10)
 
 
-class _PreToolPlugin(_Base):
-    def on_pre_tool_use(self, session_id, data) -> PreToolUseResult | None:
-        return PreToolUseResult(action="deny", reason="no")
-
-    def _register_interceptors(self, ctx) -> None:
-        ctx.bus.intercept("pre_tool_use", self._on_pre_tool_intercept, priority=10)
-
-
 class _GatePlugin(_Base):
     def __init__(self, cfg, path, ret):
         super().__init__(cfg, path)
@@ -132,17 +123,6 @@ def test_stop_explicit_register_priority_10():
     assert handler == getattr(p, "_on_stop_intercept")  # the helper, registered explicitly
     assert not chain.get("pre_tool_use")
     assert not chain.get("iteration_boundary")
-
-
-def test_pre_tool_explicit_register_priority_10():
-    ctx, bus = _ctx_with_bus()
-    p = _PreToolPlugin(_cfg(), Path("."))
-    p.install(ctx)
-    chain = getattr(bus, "_interceptors")
-    assert len(chain["pre_tool_use"]) == 1
-    assert chain["pre_tool_use"][0][0] == 10
-    assert chain["pre_tool_use"][0][1] == getattr(p, "_on_pre_tool_intercept")
-    assert not chain.get("stop_requested")
 
 
 def test_iteration_boundary_explicit_register_priority_10():
@@ -227,14 +207,6 @@ def test_stop_none_passes_through():
     p = _StopPlugin(_cfg(), Path("."), None)
     p.install(ctx)
     assert _emit(bus, "stop_requested", final_text="x") is None
-
-
-def test_pre_tool_deny_translation():
-    ctx, bus = _ctx_with_bus()
-    p = _PreToolPlugin(_cfg(), Path("."))
-    p.install(ctx)
-    r = _emit(bus, "pre_tool_use", tool_name="X")
-    assert r is not None and r.action == "block" and r.feedback == "no"
 
 
 def test_iteration_boundary_block_translation_sets_source():

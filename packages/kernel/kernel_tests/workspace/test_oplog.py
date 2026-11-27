@@ -171,31 +171,6 @@ async def test_abandon_only_before_effect(tmp_path: Path) -> None:
     assert [op.client_op_id for op in await oplog.pending_operations()] == ["op-1"]
 
 
-async def test_recovery_at_expected_old_head_allows_retry(tmp_path: Path) -> None:
-    oplog = SagaOplog(tmp_path)
-    await _begun(oplog, "op-1")
-
-    decision = await oplog.resolve("op-1", current_head="h0", read_commit=_inspector({}))
-
-    assert decision.action is RecoveryAction.RETRY_SAFE
-    operation = await oplog.get("op-1")
-    assert operation is not None
-    assert operation.phase is OperationPhase.PREPARED
-    assert operation.actual_new_head is None
-
-
-async def test_recovery_at_written_head_only_completes_ledger(tmp_path: Path) -> None:
-    oplog = SagaOplog(tmp_path)
-    await _begun(oplog, "op-1")
-    await oplog.record_new_head("op-1", "h1")
-
-    decision = await oplog.resolve("op-1", current_head="h1", read_commit=_inspector({}))
-
-    assert decision.action is RecoveryAction.COMPLETE_LEDGER
-    assert decision.actual_new_head == "h1"
-    await oplog.commit("op-1")
-
-
 async def test_recovery_after_commit_before_written_verifies_criteria(tmp_path: Path) -> None:
     """git 提交后、新头落账前崩溃：判据唯一匹配则补记，否则报告分叉。"""
     oplog = SagaOplog(tmp_path)

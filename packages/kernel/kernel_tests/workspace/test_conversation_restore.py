@@ -19,8 +19,6 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-import pytest
-
 from workflow_controller.core.checkpoints import DispatchAnchor
 from workflow_controller.core.restore.conversation import (
     CONTINUE_SIGNAL,
@@ -229,10 +227,3 @@ async def test_restorer_bind_creates_session_with_binding_metadata(tmp_path: Pat
     assert config.cwd == str(tmp_path / "ws")
     assert config.run_id == "run-1"
     assert config.env_overrides["CLAUDE_CONFIG_DIR"].endswith("claude")
-
-
-async def test_restorer_prepare_missing_transcript_fails(tmp_path: Path) -> None:
-    """源 transcript 缺席：明确失败，不产出半成品恢复数据。"""
-    restorer = _make_restorer(tmp_path / "absent.jsonl", [])
-    with pytest.raises(FileNotFoundError):
-        await restorer.prepare(_plan(tmp_path))

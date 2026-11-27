@@ -318,22 +318,6 @@ class PauseRun(RunAction):
             )
 
 
-@dataclass(frozen=True)
-class SetRunLabel(RunAction):
-    """改 run 的可读标签。"""
-
-    label: str
-
-
-@dataclass(frozen=True)
-class AdoptSession(RunAction):
-    """把既有 session 收编为本 run 成员。"""
-
-    session_id: str
-    role: str
-    context: str | None = None
-
-
 START_LIKE_ACTIONS = (StartSession, RestartSession)
 
 

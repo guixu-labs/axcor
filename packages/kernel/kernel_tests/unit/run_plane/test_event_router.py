@@ -130,12 +130,6 @@ async def test_get_recent_returns_last_n(tmp_path: Path) -> None:
     ]
 
 
-def test_db_path_for_returns_daemon_db(tmp_path: Path) -> None:
-    r = _make_router(tmp_path)
-    assert r.db_path_for("any-session") == r.db_path
-    assert r.known_db_paths() == [r.db_path]
-
-
 async def test_store_run_event_lands_in_run_events(tmp_path: Path) -> None:
     """run 键事件（无 session 身份）落 run_events 表，不混入 events。"""
     import sqlite3

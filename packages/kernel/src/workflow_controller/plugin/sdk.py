@@ -16,21 +16,18 @@
 
 Import this module to build a plugin::
 
-    from workflow_controller.plugin.sdk import Plugin, PluginContext, PluginTabDef
+    from workflow_controller.plugin.sdk import Plugin, PluginContext
 
     class MyPlugin(Plugin):
         def install(self, ctx: PluginContext):
-            ctx.bus.observe("tool_use", self._on_tool_use)
-            ctx.register_event_type("myplugin:custom", description="...")
+            super().install(ctx)  # captures ctx and dispatches the opt-in helpers
             self.register_hook_routes(ctx.hook_server, [...])
 
-        def get_web_manifest(self):
-            return [PluginTabDef(...)]
+        def get_run_panels(self):
+            return [RunPanelDef(...)]
 """
 
 __all__ = [
-    "EventTypeDef",
-    "FormatInterpreter",
     "InterceptResult",
     "IterationGateResult",
     "Plugin",
@@ -38,22 +35,16 @@ __all__ = [
     "PluginContext",
     "PluginRouter",
     "PluginServices",
-    "PluginTabDef",
-    "PreToolUseResult",
     "RunPanelDef",
     "StopHookResult",
     "plugin_router",
 ]
 
 from workflow_controller.event.event_bus import InterceptResult
-from workflow_controller.event.type_registry import EventTypeDef
 from workflow_controller.plugin.base import (
-    FormatInterpreter,
     IterationGateResult,
     Plugin,
     PluginConfig,
-    PluginTabDef,
-    PreToolUseResult,
     RunPanelDef,
     StopHookResult,
 )

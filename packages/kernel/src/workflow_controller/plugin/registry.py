@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from workflow_controller.plugin.base import FormatInterpreter, Plugin, PluginConfig
+from workflow_controller.plugin.base import Plugin, PluginConfig
 from workflow_controller.plugin.context import PluginServices
 
 if TYPE_CHECKING:
@@ -89,11 +89,6 @@ def _driver_factories(orchestrator: Any) -> dict[str, Any]:
 
         return _create_driver(*args, **kwargs)
 
-    def resolve_runtime(runtime: str | None) -> str:
-        from workflow_controller.driver.factory import resolve_runtime as _resolve_runtime
-
-        return _resolve_runtime(runtime)
-
     def find_plugin(name: str) -> Plugin | None:
         # 驱动工厂经端口解析当前活跃实例——toggle 重载换新实例后，构造期
         # 引用会留在已 uninstall 的旧实例上。按名扫描单一实现收敛在
@@ -119,7 +114,6 @@ def _driver_factories(orchestrator: Any) -> dict[str, Any]:
 
     return {
         "create_driver": create_driver,
-        "runtime_resolver": resolve_runtime,
         "find_plugin": find_plugin,
         "get_provider_model": get_provider_model,
         "reviewer_thinking_resolver": reviewer_thinking,
@@ -185,7 +179,7 @@ def _session_flow_factories(orchestrator: Any) -> dict[str, Any]:
 
 
 def _session_lookup_factories(orchestrator: Any) -> dict[str, Any]:
-    """session/事件面端口（检查点重放、会话导入等能力的宿主委托面）与 subagent 端口。"""
+    """session 查询、事件批量写入与 subagent 端口。"""
 
     def find_session(session_id: str) -> Any:
         return orchestrator.pool.get(session_id)
@@ -193,20 +187,8 @@ def _session_lookup_factories(orchestrator: Any) -> dict[str, Any]:
     def list_sessions() -> list[Any]:
         return orchestrator.pool.list_sessions()
 
-    async def load_roster_session(session_id: str) -> dict[str, Any] | None:
-        return await orchestrator.event_router.get_session(session_id)
-
-    def resolve_events_db(session_id: str) -> Any:
-        return orchestrator.event_router.db_path_for(session_id)
-
     async def store_events(events: list[Any]) -> None:
         await orchestrator.event_router.store_many(events)
-
-    async def create_session(config: Any, **kwargs: Any) -> Any:
-        return await orchestrator.pool.create(config, **kwargs)
-
-    async def start_resumed_session(config: Any, **kwargs: Any) -> Any:
-        return await orchestrator.start_session_with_resume(config, **kwargs)
 
     def in_flight_subagents(session_id: str) -> dict[str, Any]:
         return orchestrator.subagent_status(session_id)
@@ -220,40 +202,23 @@ def _session_lookup_factories(orchestrator: Any) -> dict[str, Any]:
     return {
         "session_finder": find_session,
         "session_lister": list_sessions,
-        "roster_session_loader": load_roster_session,
-        "events_db_resolver": resolve_events_db,
         "event_storer": store_events,
-        "session_creator": create_session,
-        "resume_session_starter": start_resumed_session,
         "subagent_tracker": in_flight_subagents,
         "subagent_interrupter": interrupt_subagents,
     }
 
 
-def _config_hook_factories(orchestrator: Any) -> dict[str, Any]:
-    """hook 配置、默认 runtime 与全局配置类端口实现。"""
-
-    def write_hook_config(project_dir: Any) -> None:
-        orchestrator.generate_hook_config(project_dir)
+def _config_factories(orchestrator: Any) -> dict[str, Any]:
+    """全局 runtime 与起始 prompt 配置端口实现。"""
 
     def get_default_runtime() -> str | None:
         return orchestrator.config.runtime
-
-    def remove_recent_dir(path: str) -> None:
-        # config_api 由组合根在插件装载后注入，调用期惰性读取；
-        # 未注入（boot 中途窗口/测试）时跳过——recent_dirs 同步本就 best-effort
-        ca = getattr(orchestrator, "config_api", None)
-        if ca is None:
-            return
-        ca.remove_recent_dir(path)
 
     def get_starting_prompt() -> str | None:
         return orchestrator.config.starting_prompt
 
     return {
-        "hook_config_writer": write_hook_config,
         "default_runtime_getter": get_default_runtime,
-        "recent_dir_remover": remove_recent_dir,
         "starting_prompt_getter": get_starting_prompt,
     }
 
@@ -311,7 +276,7 @@ def _build_plugin_services(orchestrator: Any) -> PluginServices:
         _driver_factories,
         _session_flow_factories,
         _session_lookup_factories,
-        _config_hook_factories,
+        _config_factories,
         _handoff_factories,
     ):
         services.update(factories(orchestrator))
@@ -530,26 +495,8 @@ class PluginRegistry:
             None,
         )
 
-    def format_interpreters(self) -> dict[str, FormatInterpreter]:
-        """全部已装载插件的格式解释器合并表（ARCHITECTURE.md「Run 身份」）。
-
-        同一格式被多个插件登记 = 派发不明确（配置错误），当场报而不是静默
-        取一家——start_run 的去向不能取决于插件装载顺序。
-        """
-        merged: dict[str, FormatInterpreter] = {}
-        owner: dict[str, str] = {}
-        for p in self._plugins:
-            for fmt, interpreter in p.get_format_interpreters().items():
-                if fmt in merged:
-                    raise ValueError(
-                        f"格式 {fmt} 被多个插件登记（{owner[fmt]} 与 {p.config.name}），派发不明确"
-                    )
-                merged[fmt] = interpreter
-                owner[fmt] = p.config.name
-        return merged
-
     def run_driver_factories(self) -> dict[str, RunDriverFactory]:
-        """驱动工厂独立派发面：与解释器注册面分离，同款重名报错纪律。"""
+        """驱动格式派发表：各插件登记的 run 驱动工厂合并表，同款重名报错纪律。"""
         merged: dict[str, RunDriverFactory] = {}
         owner: dict[str, str] = {}
         for p in self._plugins:

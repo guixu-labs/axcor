@@ -284,11 +284,6 @@ class ScopeTree:
         """查询作用域；不存在返回 None。"""
         return self._scopes.get(scope_id)
 
-    async def list_children(self, scope_id: str) -> list[ScopeRecord]:
-        """列出直接子作用域（建序）。"""
-        self._require(scope_id)
-        return [self._scopes[child_id] for child_id in self._children.get(scope_id, [])]
-
     async def list_descendants(self, scope_id: str) -> list[ScopeRecord]:
         """深度优先列出全部后代（父先子后），不含自身。"""
         self._require(scope_id)

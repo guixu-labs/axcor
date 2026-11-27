@@ -28,7 +28,6 @@ from workflow_controller.core.runs import (
     SCHEMA_VERSION,
     RunKind,
     RunNotFoundError,
-    RunRecord,
     RunStatus,
     RunStore,
 )
@@ -987,111 +986,6 @@ class TestSchemaV3DriverState:
         sessions = await store.list_run_sessions(rec.run_id)
         assert [m.session_id for m in sessions] == ["s1", "s2"]
         assert sessions[1].role == "verifier" and sessions[1].context == "b"
-
-
-class _Interpreter:
-    """FormatInterpreter 的结构实现（协议按结构匹配）。"""
-
-    def __init__(self) -> None:
-        self.started: list[str] = []
-
-    async def start(self, run: RunRecord, program_path, params: dict[str, str]) -> None:
-        self.started.append(str(program_path))
-
-    async def stop(self, run_id: str) -> None:
-        pass
-
-
-def _plugin_cls(fmts: dict[str, _Interpreter]) -> type:
-    from workflow_controller.plugin.base import Plugin
-
-    class _P(Plugin):
-        def uninstall(self) -> None:
-            pass
-
-        def get_format_interpreters(self) -> dict[str, _Interpreter]:
-            return dict(fmts)
-
-    return _P
-
-
-def _registry_discovering(monkeypatch, tmp_path, *entries: tuple[str, dict]):
-    """discover 固定返回 (插件名, 格式表) 插件三元组的注册表。"""
-    from workflow_controller.plugin.base import PluginConfig
-    from workflow_controller.plugin.registry import PluginRegistry
-
-    registry = PluginRegistry(plugins_dir=tmp_path)
-    monkeypatch.setattr(
-        registry,
-        "discover",
-        lambda: [
-            (
-                PluginConfig(name=name, version="0.1", enabled=True),
-                tmp_path / name,
-                _plugin_cls(formats),
-            )
-            for name, formats in entries
-        ],
-    )
-    return registry
-
-
-def _fake_plugin_orchestrator(tmp_path):
-    """装载用的最小 orchestrator 替身。
-
-    不 bind：bind 需要真总线的 observe_awaited，装载只透传引用。
-    """
-    from types import SimpleNamespace
-
-    from workflow_controller.core.file_changes import FileChangeRegistry
-
-    return SimpleNamespace(
-        bus=SimpleNamespace(type_registry=None),
-        config=SimpleNamespace(project_dir=str(tmp_path)),
-        file_changes=FileChangeRegistry(),
-        read_main_context=lambda *a, **k: 0,
-        read_subagent_context=lambda *a, **k: 0,
-        snapshot_main_source=lambda *a, **k: False,
-        snapshot_subagent_source=lambda *a, **k: False,
-    )
-
-
-class TestFormatDispatch:
-    @staticmethod
-    def test_plugin_default_registers_nothing(tmp_path):
-        from workflow_controller.plugin.base import Plugin, PluginConfig
-
-        class _Bare(Plugin):
-            def uninstall(self) -> None:
-                pass
-
-        bare = _Bare(PluginConfig(name="x", version="0", enabled=True), tmp_path)
-        assert bare.get_format_interpreters() == {}
-
-    async def test_registry_merges_format_interpreters(self, tmp_path, monkeypatch):
-        interp_a, interp_b = _Interpreter(), _Interpreter()
-        registry = _registry_discovering(
-            monkeypatch,
-            tmp_path,
-            ("layr", {"dag-yaml@1": interp_a}),
-            ("sk", {"skill-md": interp_b}),
-        )
-        registry.load(_fake_plugin_orchestrator(tmp_path), hook_server=None)
-        merged = registry.format_interpreters()
-        assert set(merged) == {"dag-yaml@1", "skill-md"}
-        assert merged["dag-yaml@1"] is interp_a and merged["skill-md"] is interp_b
-
-    async def test_registry_rejects_duplicate_format(self, tmp_path, monkeypatch):
-        """同格式被两个插件登记 = 派发不明确，当场报而不是静默取一家。"""
-        registry = _registry_discovering(
-            monkeypatch,
-            tmp_path,
-            ("a", {"dag-yaml@1": _Interpreter()}),
-            ("b", {"dag-yaml@1": _Interpreter()}),
-        )
-        registry.load(_fake_plugin_orchestrator(tmp_path), hook_server=None)
-        with pytest.raises(ValueError, match="dag-yaml@1"):
-            registry.format_interpreters()
 
 
 @pytest.fixture

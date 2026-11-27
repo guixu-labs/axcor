@@ -200,16 +200,6 @@ def scope_rows(rows: list[dict[str, Any]], node_id: str) -> list[dict[str, Any]]
     return [row for row in rows if pattern.fullmatch(row["scope_id"])]
 
 
-async def last_outcome_digest(plane: LivePlane, session_id: str) -> str:
-    """成员会话末条助手文本（结局事件的结果摘要）。"""
-    outcomes = [
-        event
-        for event in await plane.session_events(session_id)
-        if event.event_type is EventType.SESSION_OUTCOME
-    ]
-    return str(outcomes[-1].data.get("result_digest") or "")
-
-
 async def tool_result_of(
     plane: LivePlane, session_id: str, tool_name: str, command_fragment: str = ""
 ) -> dict[str, Any]:

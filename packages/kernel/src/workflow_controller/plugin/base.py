@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal
 
 from workflow_controller.event.event_bus import InterceptResult
 from workflow_controller.support.tasks import spawn
@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from pathlib import Path
 
-    from workflow_controller.core.runs import RunRecord
     from workflow_controller.hooks.server import HookServer
     from workflow_controller.plugin.context import PluginContext
     from workflow_controller.plugin.run_driver import RunDriverFactory
@@ -61,19 +60,6 @@ class StopHookResult:
 
 
 @dataclass
-class PreToolUseResult:
-    """Returned by Plugin.on_pre_tool_use to intercept pre-tool-use hooks.
-
-    Attributes:
-        action: Currently only "deny" is supported (block the tool call).
-        reason: Text sent back to the worker explaining the denial.
-    """
-
-    action: Literal["deny"]
-    reason: str = ""
-
-
-@dataclass
 class IterationGateResult:
     """Returned by Plugin.on_iteration_boundary to gate the loop at the
     iteration boundary (after the worker subprocess EOFs, before the
@@ -94,32 +80,6 @@ class IterationGateResult:
 
 
 @dataclass
-class PluginTabDef:
-    """Describes a UI tab contributed by a plugin (Web only).
-
-    Attributes:
-        label: Tab display name.
-        id: Unique tab identifier (auto-derived from label if unset).
-        sse_event: SSE event name for web live-updates.
-        placement: Where the tab appears — "log" area or "sidebar".
-        actions: Optional list of actions to render as buttons.
-            Each action is {"label": str, "endpoint": str, "method": str,
-            "body": dict | None, "confirm": str | None}.
-    """
-
-    label: str
-    id: str = ""
-    sse_event: str = ""
-    placement: Literal["log", "sidebar"] = "log"
-    actions: list[dict[str, Any]] | None = None
-    component: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.id:
-            self.id = self.label.lower().replace(" ", "_")
-
-
-@dataclass
 class RunPanelDef:
     """run 详情驱动面板的贡献声明（Web 面板槽位路由用）。
 
@@ -132,23 +92,6 @@ class RunPanelDef:
     format: str
     component: str
     schema_version: int
-
-
-class FormatInterpreter(Protocol):
-    """一种程序格式的解释器（ARCHITECTURE.md「Run 身份」——格式派发表条目）。
-
-    Plugin 子类在 get_format_interpreters() 里登记；start_run 按程序的
-    format 字段查表拉起。编排逻辑住在解释器里、不进内核——start 拉起解释
-    循环后立即返回（不等跑完）；stop 停名下节点（尽力而为），解释器收尾
-    自己调 finish_run 回写终态。格式是开放集合：定制格式的解释器走同一
-    接口注册。
-    """
-
-    async def start(self, run: RunRecord, program_path: Path, params: dict[str, str]) -> None:
-        raise NotImplementedError
-
-    async def stop(self, run_id: str) -> None:
-        raise NotImplementedError
 
 
 class Plugin(ABC):
@@ -182,7 +125,7 @@ class Plugin(ABC):
         interceptors) and :meth:`_register_observers` (typed observers). A
         plugin that only needs bus wiring leaves this default alone and just
         overrides the relevant helper(s); a plugin that also needs setup
-        (hook routes, state, ``observe_all`` bridge subscriptions) overrides
+        (hook routes, state, typed ``observe`` subscriptions) overrides
         ``install``, calls ``super().install(ctx)`` to keep the bus wiring,
         then does its setup::
 
@@ -197,11 +140,11 @@ class Plugin(ABC):
         to call at any lifecycle stage. Bus interceptors / observers only
         depend on ``ctx`` and always register.
 
-        The base class also provides opt-in translation helpers
-        (:meth:`_on_stop_intercept` / :meth:`_on_pre_tool_intercept` /
-        :meth:`_on_iteration_boundary_intercept`) that adapt the legacy
-        ``on_stop_hook`` / ``on_pre_tool_use`` / ``on_iteration_boundary``
-        results into ``InterceptResult``. A plugin may instead register its own
+        The base class also provides an opt-in translation helper
+        (:meth:`_on_stop_intercept` /
+        :meth:`_on_iteration_boundary_intercept`) that adapts the legacy
+        ``on_stop_hook`` / ``on_iteration_boundary`` results into
+        ``InterceptResult``. A plugin may instead register its own
         interceptor returning ``InterceptResult`` directly.
         """
         self._ctx = ctx
@@ -211,13 +154,6 @@ class Plugin(ABC):
     @abstractmethod
     def uninstall(self) -> None:
         raise NotImplementedError
-
-    def get_format_interpreters(self) -> dict[str, FormatInterpreter]:
-        """覆写以登记格式解释器（``{format: 解释器}``）；默认不登记。
-
-        start_run 按程序 format 字段到这里查表；未登记格式会被拒绝。
-        """
-        return {}
 
     # ------------------------------------------------------------------
     # Compat interceptors (translate legacy on_* hook results → InterceptResult)
@@ -230,8 +166,9 @@ class Plugin(ABC):
     def get_run_driver_factories(self) -> dict[str, RunDriverFactory]:
         """覆写以登记 run 驱动工厂（``{format: 工厂}``）；默认不登记。
 
-        与格式解释器是不同契约：解释器是启动器（start/stop），驱动工厂
-        是纯决策组件的创建/恢复面——同一 format 串只承载一种语义。
+        格式是开放集合：定制格式的编排逻辑住在驱动里（纯决策，I/O 经动作
+        交宿主执行），不进内核；start_run 按程序 format 字段到这里查表，
+        未登记格式会被拒绝。
         """
         return {}
 
@@ -305,18 +242,6 @@ class Plugin(ABC):
         """
         return None
 
-    def on_pre_tool_use(
-        self,
-        session_id: str,
-        data: dict[str, Any],
-    ) -> PreToolUseResult | None:
-        """Intercept pre-tool-use hooks before the orchestrator handles them.
-
-        Return a PreToolUseResult to deny the tool call, or None to let the
-        orchestrator (or subsequent plugins) decide.
-        """
-        return None
-
     async def on_iteration_boundary(
         self,
         session_id: str,
@@ -333,14 +258,6 @@ class Plugin(ABC):
     # ------------------------------------------------------------------
     # Utilities (helpers for plugin authors)
     # ------------------------------------------------------------------
-
-    def get_web_manifest(self) -> list[PluginTabDef]:
-        """Return descriptors for tabs to add to the web dashboard.
-
-        The frontend reads all plugin manifests at load time and renders
-        each tab as a button with a corresponding SSE-backed content area.
-        """
-        return []
 
     def get_run_panels(self) -> list[RunPanelDef]:
         """run 详情驱动面板的贡献声明（默认无面板；有面板的插件覆写）。
@@ -437,20 +354,6 @@ class Plugin(ABC):
             # force-complete the loop (mark_reviewer_let_exit). source carries
             # the plugin name for the stop_hook_plugin audit event.
             return InterceptResult(action="let_exit", source=self.config.name)
-        return None
-
-    async def _on_pre_tool_intercept(self, event: Event) -> InterceptResult | None:
-        """pre_tool_use interceptor: translate ``on_pre_tool_use`` result."""
-        result = self.on_pre_tool_use(event.session_id, event.data)
-        if result is None:
-            return None
-        if result.action == "deny":
-            logger.info(
-                "pretool: plugin %s deny for %s",
-                self.config.name,
-                event.session_id[:12],
-            )
-            return InterceptResult(action="block", feedback=result.reason)
         return None
 
     async def _on_iteration_boundary_intercept(

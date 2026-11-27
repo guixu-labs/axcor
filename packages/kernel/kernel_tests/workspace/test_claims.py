@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 
 from workflow_controller.core.workspace.claims import (
-    ClaimRejectedError,
     ClaimsRegistry,
     claims_overlap,
 )
@@ -63,31 +62,6 @@ def test_registry_conflicts_exclude_self_key() -> None:
     )
     registry.release("node-a")
     assert registry.conflicts_for("node-b", ("op/src/**", "docs/**")) == ()
-
-
-async def test_enforce_rejects_second_birth_on_overlapping_claims(tmp_path: Path) -> None:
-    """强制档：出生期声明相交即拒绝第二个单元，先到者不受影响。"""
-    _root, _repository, manager = build_workspace(tmp_path, claims_enforce=True)
-    orchestrator = FakeOrchestrator(manager)
-    await orchestrator.bootstrap_root()
-
-    prepared = await orchestrator.prepare("node-a", claims=("op/op_kernel/**",))
-    assert prepared.scope_id == "node-a"
-
-    with pytest.raises(ClaimRejectedError) as caught:
-        await orchestrator.prepare("node-b", claims=("op/op_kernel/autogen/**",))
-    assert caught.value.conflicts == (("node-a", ("op/op_kernel/autogen/**",)),)
-
-
-async def test_default_tier_registers_without_rejection(tmp_path: Path) -> None:
-    """默认档：声明相交只登记不拒绝，冲突判定留待集成期兜底。"""
-    _root, _repository, manager = build_workspace(tmp_path)
-    orchestrator = FakeOrchestrator(manager)
-    await orchestrator.bootstrap_root()
-
-    prepared_a = await orchestrator.prepare("node-a", claims=("op/op_kernel/**",))
-    prepared_b = await orchestrator.prepare("node-b", claims=("op/op_kernel/**",))
-    assert prepared_a.scope_id != prepared_b.scope_id
 
 
 async def test_claims_released_after_integration(tmp_path: Path) -> None:

@@ -53,8 +53,6 @@ from workflow_controller.core.orchestrator_helpers import (
     _build_run_attached_event,
     _build_session_auto_event,
     _build_session_complete_event,
-    _build_session_end_event,
-    _build_session_failed_event,
     _build_session_outcome_event,
     _build_session_started_event,
     _build_session_state_changed_event,
@@ -443,38 +441,6 @@ class Orchestrator:
 
         await self._maybe_start_reviewer()
         self._register_reviewer_interceptors()
-
-    async def switch_session_provider(self, session_id: str) -> int:
-        if self.auth_rotator is None:
-            raise ValueError("auth rotator not available")
-        session = self.pool.get(session_id)
-        if session is None:
-            raise ValueError(f"session not found: {session_id}")
-        await self._ensure_session_snapshots(session)
-        if session.config.provider_index is None:
-            raise ValueError(f"session {session_id} has no provider binding")
-        replacement = self.auth_rotator.find_alternative_provider(
-            session.config.provider_index,
-            runtime=session.config.runtime,
-        )
-        if replacement is None:
-            raise ValueError("no alternative provider available")
-        await self.auth_rotator.ensure_provider_capability(
-            replacement,
-            "worker",
-            runtime=session.config.runtime or self.config.runtime,
-            cwd=session.config.cwd or None,
-        )
-        provider = self.auth_rotator.get_provider(replacement)
-        session.config.provider_index = replacement
-        session.sdk_session_id = None
-        if provider.model:
-            session.config.model = provider.model
-        await self.pool.persist(session)
-        loop = self._loops.get(session_id)
-        if loop is not None:
-            loop.request_auth_switch_now()
-        return replacement
 
     async def restart_reviewer(self) -> None:
         """Stop and restart the reviewer with current config.
@@ -1236,23 +1202,6 @@ class Orchestrator:
         # 前端 tab 显隐（依赖 manifest 加载标志）与磁盘配置脱节。
         return self._plugin_registry.reload_plugin(name, self, self._hook_server)
 
-    async def reload_plugins(self) -> None:
-        """Stop hook server, unload all plugins, reload from disk, restart server.
-
-        This allows plugin enable/disable changes to take effect at runtime
-        without restarting the entire application.
-        """
-        logger.info("reloading plugins: stopping hook server")
-        if self._hook_server:
-            await self._hook_server.stop_server()
-            self._hook_server = None
-            await asyncio.sleep(0.1)
-
-        self._plugin_registry.unload_all()
-
-        if self.config.hook_server.enabled:
-            await self._restart_hook_server()
-
     async def shutdown(self) -> None:
         # 0. run 平面先收尾：驱动收尾轮与 run 键进程终止先于 session 运行时停止
         for step in self._shutdown_steps:
@@ -1318,29 +1267,8 @@ class Orchestrator:
             raise HookServerStartupError("Claude CLI session requires an active Hook Server")
         self.generate_hook_config(project_dir)
 
-    async def _restart_hook_server(self) -> None:
-        """重载后重启 hook server：端口占用最多重试 3 次（间隔 0.3s）。"""
-        for attempt in range(3):
-            if await self._try_start_hook_server():
-                return
-            if attempt < 2:
-                await asyncio.sleep(0.3)
-        logger.warning("Hook server failed to start (port in use?)")
-        self._hook_server = None
-
-    async def _try_start_hook_server(self) -> bool:
-        """单次尝试重建并启动 hook server；OSError（如端口占用）返回 False。"""
-        try:
-            self._hook_server = self._build_hook_server()
-            self._plugin_registry.load(self, self._hook_server)
-            await self._hook_server.start()
-            logger.info("hook server restarted with updated plugins")
-            return True
-        except OSError:
-            return False
-
     def _build_hook_server(self) -> HookServer:
-        """按配置装配 HookServer（启动与 reload 重建共用同一组回调）。"""
+        """按配置装配 HookServer。"""
         return HookServer(
             port=self.config.hook_server.port,
             host=self.config.hook_server.host,
@@ -1888,27 +1816,6 @@ class Orchestrator:
     def _on_native_bound(self, native_session_id: str, session_id: str) -> None:
         """attach 换绑写点的路由映射同步（与 _register_session 同序：列先落、映射随后）。"""
         self._cli_to_workflow_controller_session[native_session_id] = session_id
-
-    async def _emit_session_end(
-        self,
-        session_id: str,
-        end_state: str,
-    ) -> None:
-        try:
-            await self.bus.emit(_build_session_end_event(session_id, end_state))
-        except Exception:
-            logger.exception("failed to emit session_ended event")
-
-    async def _emit_session_failed(
-        self,
-        session_id: str,
-        reason: str,
-        traceback_text: str,
-    ) -> None:
-        try:
-            await self.bus.emit(_build_session_failed_event(session_id, reason, traceback_text))
-        except Exception:
-            logger.exception("failed to emit session_failed event")
 
     async def _handle_stop_request(
         self,

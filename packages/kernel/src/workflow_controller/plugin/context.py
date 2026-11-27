@@ -18,12 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from workflow_controller.event.type_registry import EventTypeDef, EventTypeRegistry
-
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from workflow_controller.event.event_bus import EventBus
+    from workflow_controller.event.type_registry import EventTypeRegistry
     from workflow_controller.hooks.server import HookServer
     from workflow_controller.plugin.base import Plugin
     from workflow_controller.plugin.file_changes import FileChangeCapture
@@ -43,7 +42,6 @@ class PluginServices:
     get_events_project_dir: Callable[[], str] | None = None
     # 稳定能力端口：由组合根装配 driver 创建能力，插件不依赖具体 driver 工厂模块。
     create_driver: Callable[..., Any] | None = None
-    runtime_resolver: Callable[[str | None], str] | None = None
     # 驱动工厂按名解析当前活跃插件实例（toggle 重载换实例所迫）
     find_plugin: Callable[[str], Plugin | None] | None = None
     get_provider_model: Callable[[int | None], str | None] | None = None
@@ -67,19 +65,13 @@ class PluginServices:
     subagent_context_reader: Callable[..., int] | None = None
     main_source_snapshotter: Callable[..., bool] | None = None
     subagent_source_snapshotter: Callable[..., bool] | None = None
-    # session/事件面只读与编排端口：消费方（如检查点重放、会话导入）需要查
-    # 宿主 session、持久化记录与事件库——经端口逐能力委托，不直访 orchestrator
+    # session/事件面端口：查宿主 session、批量写事件——经端口逐能力委托，
+    # 不直访 orchestrator
     session_finder: Callable[[str], Any] | None = None
     session_lister: Callable[[], list[Any]] | None = None
-    roster_session_loader: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
-    events_db_resolver: Callable[[str], Any] | None = None
     event_storer: Callable[[list[Any]], Awaitable[None]] | None = None
-    session_creator: Callable[..., Awaitable[Any]] | None = None
-    resume_session_starter: Callable[..., Awaitable[Any]] | None = None
-    hook_config_writer: Callable[[Any], None] | None = None
+    # 全局默认 runtime；未装配时 default_runtime() 回落 None
     default_runtime_getter: Callable[[], str | None] | None = None
-    # 最近项目清单维护（删除 fork/重建 session 时同步侧边栏）
-    recent_dir_remover: Callable[[str], None] | None = None
     # 交接链端口：handoff 谱系读写、CLI session ID 反解与全局起始 prompt
     cli_session_id_resolver: Callable[[str], str | None] | None = None
     session_successor_lister: Callable[[str], list[dict[str, Any]]] | None = None
@@ -122,11 +114,6 @@ class PluginServices:
                 budget if budget is not None else 2048,
             )
         return self.reviewer_thinking_resolver(project_dir, enabled, budget)
-
-    def resolve_runtime(self, runtime: str | None) -> str:
-        if self.runtime_resolver is None:
-            raise RuntimeError("runtime resolver service is not available")
-        return self.runtime_resolver(runtime)
 
     async def start_session(self, config: Any, *, compose_prompt: bool = True) -> Any:
         if self.session_starter is None:
@@ -250,7 +237,7 @@ class PluginServices:
         return self.session_finder(session_id)
 
     def list_sessions(self) -> list[Any]:
-        """列出内存池全部 session 对象（reaper 活动集保护等只读遍历）。
+        """列出内存池全部 session 对象（按 SDK session ID 反查等只读遍历）。
 
         未装配视作空池：全集枚举的空答案良定义（与 find_session 的未命中
         语义不同），不因端口缺位抛错。
@@ -259,52 +246,17 @@ class PluginServices:
             return []
         return self.session_lister()
 
-    async def load_roster_session(self, session_id: str) -> dict[str, Any] | None:
-        """读持久化的 session 记录（含 config_json 与 plugin_metadata）；未命中返回 None。"""
-        if self.roster_session_loader is None:
-            raise RuntimeError("roster session service is not available")
-        return await self.roster_session_loader(session_id)
-
-    def events_db_path(self, session_id: str) -> Any:
-        """解析 session 所属事件库路径（插件自开连接的寻址面）。"""
-        if self.events_db_resolver is None:
-            raise RuntimeError("events db service is not available")
-        return self.events_db_resolver(session_id)
-
     async def store_events(self, events: list[Any]) -> None:
         """批量写事件到事件库（单条事件用单元素列表）。"""
         if self.event_storer is None:
             raise RuntimeError("event store service is not available")
         await self.event_storer(events)
 
-    async def create_session(self, config: Any, **kwargs: Any) -> Any:
-        """创建 session 并入池持久化（不激活运行）。"""
-        if self.session_creator is None:
-            raise RuntimeError("session create service is not available")
-        return await self.session_creator(config, **kwargs)
-
-    async def start_resumed_session(self, config: Any, **kwargs: Any) -> Any:
-        """起一个可 resume 预制 SDK 会话的 session（携带插件溯源元数据）。"""
-        if self.resume_session_starter is None:
-            raise RuntimeError("session resume service is not available")
-        return await self.resume_session_starter(config, **kwargs)
-
-    def write_hook_config(self, project_dir: Any) -> None:
-        """在项目目录写 hook 配置（fork 工作目录接上 worker 钩子）。"""
-        if self.hook_config_writer is None:
-            raise RuntimeError("hook config service is not available")
-        self.hook_config_writer(project_dir)
-
     def default_runtime(self) -> str | None:
         """全局默认 runtime；未装配返回 None，调用方按无注入回落。"""
         if self.default_runtime_getter is None:
             return None
         return self.default_runtime_getter()
-
-    def remove_recent_dir(self, path: str) -> None:
-        """从最近项目清单移除目录（best-effort；未装配时静默跳过）。"""
-        if self.recent_dir_remover is not None:
-            self.recent_dir_remover(path)
 
     def resolve_cli_session_id(self, cli_session_id: str) -> str | None:
         """把 CLI/SDK session ID 反解为宿主 session ID；未命中返回 None。"""
@@ -362,6 +314,3 @@ class PluginContext:
     # 由 PluginRegistry.load 注入，默认 = Path.cwd()
     work_dir: Path = field(default_factory=Path.cwd)
     services: PluginServices = field(default_factory=PluginServices)
-
-    def register_event_type(self, name: str, **kwargs: Any) -> None:
-        self.type_registry.register(EventTypeDef(name=name, **kwargs))

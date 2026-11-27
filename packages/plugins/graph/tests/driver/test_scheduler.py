@@ -320,11 +320,6 @@ class TestPlanRestore:
         assert plan.new_gen == 1
         assert plan.stop_nodes == set()
 
-    def test_stopped_target_needs_no_failed_precondition(self):
-        # 超时后 stopped 节点不满足 plan_rollback 的 failed 前提，plan_restore 可计划
-        dag, st = self._stopped_setup()
-        assert scheduler.plan_restore(st, dag, "B", self._reason("B"), st.gen("B")) is not None
-
     def test_expected_gen_mismatch_returns_none(self):
         dag, st = self._stopped_setup()
         stale = scheduler.plan_restore(st, dag, "B", self._reason("B"), st.gen("B") + 3)

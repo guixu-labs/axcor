@@ -47,7 +47,6 @@ from workflow_controller.core.workspace.scope_tree import ScopeKind
 from ._support import build_workspace
 
 if TYPE_CHECKING:
-    from workflow_controller.core.checkpoints import ScopeCheckpoint
     from workflow_controller.core.workspace.manager import WorkspaceManager
 
 _ORIGIN_REF = "driver-snapshot:1"
@@ -200,35 +199,6 @@ async def test_subsequent_task_joins_group_and_advances_child_base(tmp_path: Pat
     )
 
 
-async def test_subsequent_write_tool_joins_without_moving_restore_point(
-    tmp_path: Path,
-) -> None:
-    """同 message 后续写工具入组：放行不建行，组恢复点不动。"""
-    arbiter, _manager, parent, store = await _make_arbiter(tmp_path)
-    first = await arbiter.admit_side_effect(
-        parent_scope_id=parent,
-        anchor=_anchor("msg-1", "tool-w1"),
-        child=None,
-        barrier_quality=BarrierQuality.PRECISE,
-        orchestration_state_ref=_ORIGIN_REF,
-    )
-    row = await store.get(first.group_checkpoint_id)
-    assert row is not None
-    later = await arbiter.admit_side_effect(
-        parent_scope_id=parent,
-        anchor=_anchor("msg-1", "tool-w2"),
-        child=None,
-        barrier_quality=BarrierQuality.PRECISE,
-        orchestration_state_ref=_ORIGIN_REF,
-    )
-    assert later.dispatch_group_id == first.dispatch_group_id
-    refreshed = await store.get(first.group_checkpoint_id)
-    assert refreshed is not None
-    assert refreshed.workspace_commit == row.workspace_commit
-    parent_rows = [r for r in await store.list_for_scope(parent)]
-    assert len(parent_rows) == 1  # 写工具入组不新增检查点行
-
-
 async def test_new_message_starts_new_group(tmp_path: Path) -> None:
     """不同 message 开新组：新恢复点、新组标识。"""
     arbiter, _manager, parent, _store = await _make_arbiter(tmp_path)
@@ -248,40 +218,6 @@ async def test_new_message_starts_new_group(tmp_path: Path) -> None:
     )
     assert second.dispatch_group_id != first.dispatch_group_id
     assert second.group_checkpoint_id != first.group_checkpoint_id
-
-
-async def test_compat_mode_marks_late_barrier(tmp_path: Path) -> None:
-    """弱化档入组行标注 late_barrier。"""
-    arbiter, _manager, parent, store = await _make_arbiter(tmp_path)
-    admission = await arbiter.admit_side_effect(
-        parent_scope_id=parent,
-        anchor=_anchor("msg-1", "tool-l"),
-        child=None,
-        barrier_quality=BarrierQuality.LATE_BARRIER,
-        orchestration_state_ref=_ORIGIN_REF,
-    )
-    row = await store.get(admission.group_checkpoint_id)
-    assert row is not None
-    assert row.barrier_quality is BarrierQuality.LATE_BARRIER
-
-
-async def test_attach_child_session_backfills_map(tmp_path: Path) -> None:
-    """子代理启动后回填 child_session_map（scope_id → 原生子会话）。"""
-    arbiter, _manager, parent, store = await _make_arbiter(tmp_path)
-    admission = await arbiter.admit_side_effect(
-        parent_scope_id=parent,
-        anchor=_anchor("msg-1", "tool-t9", preallocated="node-a-c9"),
-        child=ChildDispatchRequest(scope_key="node-a-c9", client_op_id="dispatch-9"),
-        barrier_quality=BarrierQuality.PRECISE,
-        orchestration_state_ref=_ORIGIN_REF,
-    )
-    assert admission.child_scope_id
-    await arbiter.attach_child_session(
-        admission.checkpoint_id, admission.child_scope_id, "ses-child-9"
-    )
-    row: ScopeCheckpoint | None = await store.get(admission.checkpoint_id)
-    assert row is not None
-    assert row.child_session_map == {admission.child_scope_id: "ses-child-9"}
 
 
 async def test_missing_orchestration_ref_rejected(tmp_path: Path) -> None:

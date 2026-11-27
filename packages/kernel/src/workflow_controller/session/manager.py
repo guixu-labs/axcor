@@ -134,15 +134,6 @@ class SessionPool:
             None,
         )
 
-    async def get_or_create(self, name: str) -> Session:
-        existing = self.get_by_name(name)
-        if existing:
-            return existing
-        config = self._configs.get(name)
-        if config is None:
-            raise ValueError(f"No config registered for session '{name}'")
-        return await self.create(config)
-
     async def stop(self, session_id: str) -> None:
         session = self._sessions.get(session_id)
         if session:
@@ -214,9 +205,6 @@ class SessionPool:
         ):
             return None
         return self._sessions.get(session_id)
-
-    def list_by_state(self, state: SessionState) -> list[Session]:
-        return [s for s in self._sessions.values() if s.state == state]
 
     def load_sessions(self) -> int:
         """Load ghost sessions from events.db sessions table.

@@ -444,21 +444,6 @@ class GraphState:
         with self._lock:
             return copy.deepcopy(self._data)
 
-    def reset_for_new_execution(self) -> None:
-        """全新执行的整体重置：节点回初始值，回滚/归档档案清零。
-
-        与「重开续跑」的局部复活不同，这是全新 run 的从头执行——上一轮的
-        完成态不能让新 run 零执行空转。已合并的子图节点由调用方先从 DAG
-        与 state 一起废弃，单侧残留会让重新合并或调度出错。
-        """
-        with self._lock:
-            self._data = {
-                "graph_id": self._graph_id,
-                "status": "pending",
-                "nodes": {nid: default_node() for nid in self._data["nodes"]},
-            }
-        self._checkpoint()
-
     def _set_node_field(self, node_id: str, key: str, value: Any) -> None:
         """单字段变更（锁内置值）。"""
         with self._lock:

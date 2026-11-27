@@ -31,8 +31,6 @@ from .types import RawInteraction, TokenUsage, ToolCallInfo
 
 logger = logging.getLogger(__name__)
 
-CONTINUATION_MARKER = "This session is being continued from a previous conversation"
-
 
 def _is_valid_iso(ts: str) -> bool:
     return bool(re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", ts))
@@ -71,24 +69,6 @@ def _extract_tool_calls(content: list) -> list[ToolCallInfo] | None:
         )
         for b in tool_use
     ]
-
-
-def _map_usage(usage: dict | None, cost_usd: float = 0.0) -> TokenUsage | None:
-    if not usage:
-        return None
-    inp = usage.get("input_tokens", 0)
-    cache_read = usage.get("cache_read_input_tokens", 0)
-    cache_write = usage.get("cache_creation_input_tokens", 0)
-    return TokenUsage(
-        total=inp + usage.get("output_tokens", 0) + cache_read + cache_write,
-        input=inp,
-        output=usage.get("output_tokens", 0),
-        reasoning=0,
-        cache_read=cache_read,
-        cache_write=cache_write,
-        cost=cost_usd,
-        input_messages_tokens=inp + cache_read + cache_write,
-    )
 
 
 def _parse_jsonl(file_path: str) -> list[dict]:

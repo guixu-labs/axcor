@@ -105,7 +105,7 @@ class PluginAPI:
         return None
 
     def list_plugins(self) -> list[dict[str, Any]]:
-        """发现面清单；已装载插件附 web 声明与 run 面板贡献。"""
+        """发现面清单；已装载插件附装载标记与 run 面板贡献。"""
         try:
             discovered = self._orch.discover_plugins()
         except Exception:
@@ -125,17 +125,9 @@ class PluginAPI:
         for plugin in self._orch.plugins:
             for entry in entries:
                 if entry["name"] == plugin.config.name:
-                    entry["manifest"] = [
-                        {
-                            "label": t.label,
-                            "id": t.id,
-                            "sse_event": t.sse_event,
-                            "placement": t.placement,
-                            "actions": t.actions,
-                            "component": t.component,
-                        }
-                        for t in plugin.get_web_manifest()
-                    ]
+                    # 过渡：manifest 不再承载内容，仅作控制台判定「插件已装载」的
+                    # 标记键（控制台按键在场判定）；控制台换用其他判定后删除
+                    entry["manifest"] = []
                     # run 驱动面板贡献声明（面板槽位路由用；仅活插件有条目）
                     entry["run_panels"] = [
                         {

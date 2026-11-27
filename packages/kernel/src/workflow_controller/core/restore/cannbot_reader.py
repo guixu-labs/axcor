@@ -200,18 +200,6 @@ class CannbotDbReader:
             root_execution_id=str(r["rootExecutionId"] or ""),
         )
 
-    # ── 顶层元数据 ──────────────────────────────────────────────────
-
-    def read_executions(self) -> list[dict[str, Any]]:
-        """读 ``Execution`` 表（建执行树，含主 depth=0 + 子 depth=1）。"""
-        con = self._connect()
-        rows = con.execute(
-            "SELECT id, sessionId, agentName, agentSessionId, isSubagent, "
-            "subagentType, subagentName, parentExecutionId, rootExecutionId, "
-            "depth FROM Execution",
-        ).fetchall()
-        return [dict(r) for r in rows]
-
     # ── 子表读取 ─────────────────────────────────────────────────────
 
     def read_bridges(self) -> list[dict[str, Any]]:

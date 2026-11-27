@@ -23,19 +23,14 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .types import RawInteraction, SessionMeta, TokenUsage, ToolCallInfo
 
+if TYPE_CHECKING:
+    import sqlite3
+
 logger = logging.getLogger(__name__)
-
-
-def _open_ro(db_path: str) -> sqlite3.Connection:
-    """以只读模式打开 opencode 数据库。"""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def _task_part_session_id(r: sqlite3.Row) -> str | None:

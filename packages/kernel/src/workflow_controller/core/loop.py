@@ -43,9 +43,6 @@ if TYPE_CHECKING:
     from workflow_controller.store.event_router import EventStoreRouter
 
 
-# Resume feedback injected after a wait_and_retry sleep window.
-_WAIT_RETRY_RESUME_PROMPT = "10 分钟过去了,等待的任务应该已完成,继续吧。"
-
 # loop 等人检测的问询词表：比 reviewer 停机路径的默认词表宽（历史措辞更全），
 # 两条路径各自保持既有命中范围，不按共享词表裁剪；中文核心段与 reviewer
 # 共用（NL_QUESTION_CORE_ZH），两侧的外围词项各自维护。

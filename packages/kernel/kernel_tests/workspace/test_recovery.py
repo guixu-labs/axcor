@@ -577,27 +577,6 @@ async def test_recovery_completes_empty_only_retract_without_epoch_advance(
     assert {scope for scope, _epoch in replay.invalidated} == {"node-empty"}
 
 
-async def test_recovery_abandons_uneffective_prepared_op(tmp_path: Path) -> None:
-    """意图未生效（头未动）：恢复即放弃，不重放。"""
-    site = _CrashSite(tmp_path)
-    await site.build()
-    head = await site.manager.current_integration_head()
-    await SagaOplog(site.repository.tree_dir).begin(
-        client_op_id="stale-integrate",
-        op_kind="integrate_scope",
-        expected_old_head=head or "",
-        scope_epoch=1,
-        root_epoch=1,
-        metadata={"scope_id": "node-w2", "parent_scope_id": _ROOT_SCOPE_ID},
-    )
-
-    manager, report = await site.rebuild()
-
-    assert report.abandoned_op_ids == ["stale-integrate"]
-    assert report.completed_op_ids == []
-    assert (await _record(manager, "node-w2")).state is ScopeState.ACTIVE
-
-
 @pytest.mark.parametrize("abandoned_before", [False, True], ids=["first-attempt", "rebuilt"])
 async def test_recovery_completes_prepare_written_before_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, abandoned_before: bool

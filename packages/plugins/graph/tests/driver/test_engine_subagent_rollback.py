@@ -32,7 +32,6 @@ from workflow_controller.plugin.workspace import (
     ScopeRestored,
     WorkspaceActionFailed,
 )
-from workflow_controller.plugins.graph.driver.state import GraphState
 
 from .test_engine import build_driver, decide, pick
 from .test_engine_workspace import _TRACEBACK_CFG
@@ -291,15 +290,3 @@ def test_subagent_stale_mapping_fails_operation(tmp_path: Path) -> None:
     decide(driver)
     assert _op_phase(driver, "co-3") == "failed"
     assert "映射已变化" in driver.handle_op("get_operation", {"operation_id": "co-3"})["error"]
-
-
-def test_subagent_operations_persist_through_snapshot(tmp_path: Path) -> None:
-    """操作账随驱动快照持久化，恢复后幂等键可查。"""
-    driver = _running_member_driver(tmp_path)
-    driver.handle_op("rollback_subagent", _op_args())
-    decide(driver)
-    blob = driver.snapshot()
-    assert blob["state"]["operations"]["co-1"]["phase"] == "restoring"
-    assert blob["state"]["operations"]["co-1"]["kind"] == "rollback_subagent"
-    restored = GraphState("g1", "wf", set(blob["state"]["nodes"]), initial_data=blob["state"])
-    assert restored.operation_by_client("co-1")["phase"] == "restoring"

@@ -99,7 +99,6 @@ class PreviewHarness:
     """双代预览装配：真实 git（快照仓 + 会话树）与假会话事实。"""
 
     def __init__(self, tmp_path: Path) -> None:
-        self.tmp = tmp_path
         self.db_path = tmp_path / "events.db"
         self.original = tmp_path / "proj"
         self.original.mkdir(parents=True)
@@ -138,7 +137,7 @@ class PreviewHarness:
             config=SimpleNamespace(
                 cwd=str(cwd or self.original),
                 runtime="claude_sdk",
-                traceback=traceback if traceback is not None else _workspace_traceback(),
+                traceback=traceback if traceback is not None else SessionTracebackConfig(),
             ),
         )
 
@@ -190,10 +189,6 @@ class PreviewHarness:
 
     async def _noop_events(self, events: list[Any]) -> None:
         return None
-
-
-def _workspace_traceback() -> SessionTracebackConfig:
-    return SessionTracebackConfig()
 
 
 def _git(cwd: Path, args: list[str]) -> Any:

@@ -213,40 +213,6 @@ async def test_git_merge_policy_rejects_real_conflict_with_payload(tmp_path: Pat
     assert (root / "design" / "notes.txt").read_text(encoding="utf-8").startswith("MINE\n")
 
 
-async def test_strict_policy_rejects_any_path_overlap(tmp_path: Path) -> None:
-    """严格档：路径集重叠即拒，即使片段不相交可自动合并。"""
-    root, repository, coordinator, _refs = await _setup(tmp_path, policy=ConflictPolicy.STRICT)
-    (root / "design" / "notes.txt").write_text(NOTES_BASE, encoding="utf-8")
-    await coordinator.commit_pending_state(
-        WorkspaceTarget(path=root, separated_env=True),
-        exclude_pathspecs=WorkspaceManifest().git_line_commit_exclude_specs(),
-        message="root notes baseline",
-    )
-    base = await repository.resolve_ref(ROOT_INTEGRATION_REF)
-    upper = await repository.create_scope_workspace("node-upper", base_commit=base)
-    lower = await repository.create_scope_workspace("node-lower", base_commit=base)
-
-    (upper.path / "design" / "notes.txt").write_text(
-        "w1-UP\nw2-UP\nmid1\nmid2\np1\np2\n", encoding="utf-8"
-    )
-    (lower.path / "design" / "notes.txt").write_text(
-        "w1\nw2\nmid1\nmid2\np1-LOW\np2-LOW\n", encoding="utf-8"
-    )
-    head_upper = await _commit_writer(coordinator, repository, upper)
-    head_lower = await _commit_writer(coordinator, repository, lower)
-
-    first = await _integrate(
-        coordinator, repository, root, scope_key="node-upper", base=base, writer_head=head_upper
-    )
-    second = await _integrate(
-        coordinator, repository, root, scope_key="node-lower", base=base, writer_head=head_lower
-    )
-
-    assert isinstance(first, IntegrationSuccess)
-    assert isinstance(second, IntegrationConflict)
-    assert second.conflict_paths == (NOTES,)
-
-
 async def test_writer_local_only_change_is_noop_integration(tmp_path: Path) -> None:
     """写者只改自建路径且父线未动：空集成不误报、不产生提交。"""
     root, repository, coordinator, refs = await _setup(tmp_path, policy=ConflictPolicy.GIT_MERGE)

@@ -75,13 +75,6 @@ class SessionState(Enum):
     # and worker --resume. See design.md §11.
 
 
-# New design: simplified states (will replace SessionState in future)
-# For now, keep both for backward compatibility
-class SessionStateNew(Enum):
-    IDLE = "idle"
-    RUNNING = "running"
-
-
 class Session:
     def __init__(
         self,

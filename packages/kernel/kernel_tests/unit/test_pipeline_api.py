@@ -55,7 +55,6 @@ def _fake_pool(sessions: list[Session]) -> Any:
     return SimpleNamespace(
         get=lambda sid: by_id.get(sid),
         list_sessions=lambda: list(sessions),
-        list_by_state=lambda st: [s for s in sessions if s.state == st],
     )
 
 

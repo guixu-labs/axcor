@@ -20,9 +20,6 @@ import pytest
 
 from workflow_controller.core.workspace.manifest import (
     DEFAULT_WRITER_LOCAL_PATHSPECS,
-    CheckpointKind,
-    InheritBinding,
-    InheritDeclaration,
     IntegrationPolicy,
     PathPolicy,
     RebuildScript,
@@ -127,18 +124,3 @@ def test_empty_pathspec_rejected() -> None:
     """空路径规格拒绝。"""
     with pytest.raises(WorkspaceManifestError, match="非法路径规格"):
         WorkspaceManifest(writer_local=("",))
-
-
-def test_inherit_declaration_and_binding_types() -> None:
-    """继承声明分两层：静态声明只含节点与检查点类型，绑定是精确三元组。"""
-    declaration = InheritDeclaration(
-        producer_node="upstream-build", checkpoint=CheckpointKind.TERMINAL
-    )
-    binding = InheritBinding(
-        producer_scope_id="scope-upstream-build",
-        producer_scope_epoch=3,
-        checkpoint_id="ckpt-42",
-    )
-
-    assert declaration.checkpoint is CheckpointKind.TERMINAL
-    assert binding.producer_scope_epoch == 3

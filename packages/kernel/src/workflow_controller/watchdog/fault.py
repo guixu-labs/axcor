@@ -49,9 +49,6 @@ FAULT_TYPE_PREFIX = "fault."
 WORKSPACE_CONFLICT_RULE = "workspace_conflict"
 SCOPE_QUIESCE_FAILED_RULE = "scope_quiesce_failed"
 
-# 检测规则词目：节点累计超时（run 键寻址，payload 为领域事实）
-NODE_TIMEOUT_RULE = "node_timeout"
-
 
 def fault_event_type(rule: str) -> str:
     """规则名 → fault.* 事件类型。"""

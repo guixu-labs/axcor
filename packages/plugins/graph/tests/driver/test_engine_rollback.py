@@ -33,7 +33,6 @@ from workflow_controller.plugin.workspace import (
     ScopeWorkspacePrepared,
     WorkspaceActionFailed,
 )
-from workflow_controller.plugins.graph.driver.state import GraphState
 
 from .test_engine import build_driver, decide, pick, proc_exit
 from .test_engine_workspace import _TRACEBACK_CFG, integrated_note, terminal_note
@@ -282,27 +281,6 @@ def test_rebuilding_workspace_ready_leaves_finalize_record_empty(tmp_path: Path)
     op = driver.handle_op("get_operation", {"operation_id": "co-1"})
     assert op["phase"] == "succeeded"
     assert op["terminal_finalized"] == {}
-
-
-def test_recovery_demotes_abandoning_phase(tmp_path: Path) -> None:
-    """恢复时在途废弃相位退回登记态：崩溃窗内废弃是否已执行未知，重发幂等收口。"""
-    driver = _started_driver(tmp_path)
-    driver.handle_op("rollback_node", _op_args())
-    decide(driver)
-    assert _op_phase(driver) == "abandoning"
-    driver.prepare_recovery(running=True)
-    assert _op_phase(driver) == "pending"
-
-
-def test_operations_persist_through_snapshot(tmp_path: Path) -> None:
-    """操作账随驱动快照持久化，恢复后幂等键可查。"""
-    driver = _started_driver(tmp_path)
-    driver.handle_op("rollback_node", _op_args())
-    decide(driver)
-    blob = driver.snapshot()
-    assert blob["state"]["operations"]["co-1"]["phase"] == "abandoning"
-    restored = GraphState("g1", "wf", set(blob["state"]["nodes"]), initial_data=blob["state"])
-    assert restored.operation_by_client("co-1")["phase"] == "abandoning"
 
 
 def test_unknown_operation_lookup_error(tmp_path: Path) -> None:

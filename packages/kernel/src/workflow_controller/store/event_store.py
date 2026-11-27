@@ -462,24 +462,6 @@ class EventStore:
     async def get_iterations(self, session_id: str) -> int:
         return await asyncio.to_thread(self._get_iterations_locked, session_id)
 
-    def get_unique_session_ids_sync(self) -> list[str]:
-        """Return all distinct session_ids in the store (oldest first)."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT session_id FROM events GROUP BY session_id ORDER BY MIN(id)"
-            ).fetchall()
-        return [r[0] for r in rows]
-
-    def session_has_result_sync(self, session_id: str) -> bool:
-        """Check if a session already has a RESULT or STEP_FINISH event."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM events WHERE session_id = ? "
-                "AND event_type IN ('result', 'step_finish') LIMIT 1",
-                (session_id,),
-            ).fetchone()
-        return row is not None
-
     def delete_session(self, session_id: str) -> None:
         with self._lock, self._connect_write() as conn:
             conn.execute("DELETE FROM events WHERE session_id = ?", (session_id,))
@@ -539,24 +521,6 @@ class EventStore:
         """sessions 表行 UPSERT（键为 sessions 表列名）。"""
         await asyncio.to_thread(self._upsert_roster_locked, fields)
 
-    async def update_roster_state(
-        self,
-        session_id: str,
-        state: str,
-        *,
-        loop_status: str | None = None,
-        stop_reason: str | None = None,
-        loop_hold: str | None = None,
-    ) -> None:
-        await asyncio.to_thread(
-            self._update_roster_state_locked,
-            session_id,
-            state,
-            loop_status,
-            stop_reason,
-            loop_hold,
-        )
-
     async def update_roster_loop_status(
         self,
         session_id: str,
@@ -574,9 +538,6 @@ class EventStore:
             stop_reason,
             loop_hold,
         )
-
-    async def update_roster_name(self, session_id: str, name: str) -> None:
-        await asyncio.to_thread(self._update_roster_name_locked, session_id, name)
 
     def update_roster_name_sync(self, session_id: str, name: str) -> None:
         self._update_roster_name_locked(session_id, name)
@@ -890,32 +851,6 @@ class EventStore:
                 f"INSERT OR REPLACE INTO sessions ({', '.join(cols)})"
                 f" VALUES ({', '.join('?' for _ in cols)})",
                 [fields[c] for c in cols],
-            )
-
-    def _update_roster_state_locked(
-        self,
-        session_id: str,
-        state: str,
-        loop_status: str | None,
-        stop_reason: str | None,
-        loop_hold: str | None,
-    ) -> None:
-        with self._lock, self._connect_write() as conn:
-            sets = ["state = ?"]
-            params: list = [state]
-            if loop_status is not None:
-                sets.append("loop_status = ?")
-                params.append(loop_status)
-            if stop_reason is not None or loop_status is not None:
-                sets.append("stop_reason = ?")
-                params.append(stop_reason)
-            if loop_hold is not None or loop_status is not None:
-                sets.append("loop_hold = ?")
-                params.append(loop_hold)
-            params.append(session_id)
-            conn.execute(
-                f"UPDATE sessions SET {', '.join(sets)} WHERE id = ?",
-                params,
             )
 
     def _update_roster_loop_status_locked(

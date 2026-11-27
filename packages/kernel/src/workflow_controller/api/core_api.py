@@ -151,7 +151,4 @@ async def boot(
     # run 平面关停接入 orchestrator 关停序（session 运行时与池停止之前）
     orch.register_shutdown_step(coordinator.shutdown)
     api = create_core_api(orch, config_path, coordinator)
-    # 把 ConfigAPI 注入 orchestrator，供插件按需取用（如删除重建 session 时
-    # 同步 recent_dirs.json）——与 cfg_dir / auth_rotator 同款注入方式。
-    orch.config_api = api.config  # type: ignore[attr-defined]
     return orch, api
