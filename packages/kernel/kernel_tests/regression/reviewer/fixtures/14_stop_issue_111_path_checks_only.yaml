@@ -1,0 +1,51 @@
+name: stop_issue_111_path_checks_only
+kind: stop_hook
+repeat: 5
+
+description: |
+  使用 Issue #111 的原始 reviewer goal 和完整末条回复。
+  用户要求完成 DeepSeek V4 适配及性能、GPQA 验收，末条回复汇报了路径存在性和报告更新。
+  测试模拟所引用的文件均已落盘。
+
+task_goal: |
+  完成既定任务：按目标在工作目录中生成/补全代码与产物，
+  并确保可验证。
+  在任务全部完成前永远不要选"结束本轮/输出报告/收尾"类选项；
+  优先选"继续/推进下一步"。
+
+worker_context: |
+  按要求执行了 git add → 提交 → 逐条 git cat-file -e HEAD，实际返回如下（HEAD 为 7bcf0f1201fb2f17fc44e3bfb11cf67f23ef9be0）：
+
+  git cat-file -e HEAD:.day0/DeepseekV4ForCausalLM_20261123_1/parallel/graph_acceptance.py
+      -> exit 0, size 11137
+  git cat-file -e HEAD:.day0/DeepseekV4ForCausalLM_20261123_1/parallel/tools/graph_acceptance.py
+      -> exit 0, size 11137
+  git cat-file -e HEAD:.day0/DeepseekV4ForCausalLM_20261123_1/parallel/impl/developer-4/smoke.ready.json
+      -> exit 0, size 182
+  git cat-file -e HEAD:.day0/DeepSeekV4ForCausalLM_20261123_1/parallel/graph_acceptance.py
+      -> exit 0, size 11137
+  git cat-file -e HEAD:.day0/DeepSeekV4ForCausalLM_20261123_1/parallel/tools/graph_acceptance.py
+      -> exit 0, size 11137
+  git cat-file -e HEAD:.day0/DeepSeekV4ForCausalLM_20261123_1/parallel/impl/developer-4/smoke.ready.json
+      -> exit 0, size 182
+  关于 git add：对那三个小写目录文件执行 git add -f 后 git diff --cached --name-only 为空——不是失败，是索引内容与工作区已经一致，没有可暂存的差异。随后 git ls-files -s 显示它们的 blob 是 907953b0…（三份判断器）与 31c57b70…（READY），与 HEAD 一致。
+
+  这些原始返回已写进报告第 4 节，parallel/findings/artifact-presence-20261127.md 现在的结构是：0 目录名与绝对路径、1 ls -l、2 stat、3 全量路径表、4 git cat-file -e 逐条、5 cmp、6 READY 原文。
+
+  同时修了上一版报告的两个结构问题：编辑时把第 5 节的 cmp 内容吞掉了，并留下两个都编号为 4 的标题。已恢复 cmp 段（八条全 IDENTICAL）并重排为 4/5/6。提交 79f94f1d8。
+
+  至此，你说的六条路径在四种独立读法下（ls、stat、sha256sum、git cat-file -e HEAD）都是存在的，报告里贴的是命令的实际输出而非结论描述。
+
+staged_disk:
+  - .day0/DeepseekV4ForCausalLM_20261123_1/parallel/graph_acceptance.py
+  - .day0/DeepseekV4ForCausalLM_20261123_1/parallel/tools/graph_acceptance.py
+  - .day0/DeepseekV4ForCausalLM_20261123_1/parallel/impl/developer-4/smoke.ready.json
+  - .day0/DeepSeekV4ForCausalLM_20261123_1/parallel/graph_acceptance.py
+  - .day0/DeepSeekV4ForCausalLM_20261123_1/parallel/tools/graph_acceptance.py
+  - .day0/DeepSeekV4ForCausalLM_20261123_1/parallel/impl/developer-4/smoke.ready.json
+  - parallel/findings/artifact-presence-20261127.md
+
+expected:
+  action: block_with_feedback
+  feedback_must_not_include:
+    - 继续完成本轮剩余工作。

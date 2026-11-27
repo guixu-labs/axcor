@@ -17,12 +17,12 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 - **AUQ 判定 = 纯叙述判断**（不读磁盘）：reviewer 为 worker 弹的每个问题选一个能让任务
   推进得最远的选项，规则核心是"忽略 worker 标的 (推荐) / 风险 / 安全 措辞"。
 
-## Fixture 清单（13 个，领域中性）
+## Fixture 清单（14 个，领域中性）
 
 所有 fixture 都是领域无关的通用软件 / 文档场景（保留被测的决策逻辑与 partial 信号）。
 算子领域专属 case 以后走 per-plugin 补。通用 fixture 按执行顺序从 01 连续编号。
 
-### STOP（7 个）
+### STOP（8 个）
 
 | ID | 被测决策逻辑 | 期望 |
 |---|---|---|
@@ -33,6 +33,7 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 | 11 | gate 类：worker 中途请审批（"回复 继续 / 通过"）→ feedback 极简"继续"，不展开缺失清单 | block |
 | 12 | 正向：技术调研文档任务，0 partial 信号，刻意脱离多阶段交付结构 → 放行（证明 let_exit 不绑领域） | let_exit |
 | 13 | 外部设备占用阻塞必需项（G2 门禁验证未执行），产物已落盘 → 保留未完成事实并阻断退出 | block |
+| 14 | [#111](https://github.com/guixu-labs/axcor/issues/111)：使用原始 reviewer goal 和完整末条回复回放，六条路径及报告均存在，末条回复仅汇报产物存在性 → 阻断退出 | block |
 
 ### AUQ（6 个）
 
@@ -49,6 +50,16 @@ AUQ 的 `expected.action` 全是 `block_with_feedback`——AUQ 钩子结构上�
 exit，断言聚焦在 `selected` 选对了哪个选项（`auq_must_select_one_of` / `auq_must_not_select`）。
 
 ## 当前基线状态
+
+**#111 回放范围**：fixture 14 使用 issue 补充的完整末条回复和原始 reviewer goal，
+并在临时目录模拟回复所引文件均已落盘。原始用户任务要求模型适配、TPOT 小于 20 ms、
+Stage 4 用 aisbench 执行 GPQA 测评以及 TP=8。通用 Stop Hook 传入末条回复、reviewer goal
+与文件事实，原始用户任务要求用于理解本用例的期望，未额外注入回放 prompt。
+用例连续调用模型，任意一次提前放行都视为回归失败。
+2026-11-27 在 `5e31db4` 上用 `deepseek-v4-pro` 回放，观测到 `block_with_feedback`
+和 `let_exit` 两种结果。放行理由为「全部必需项完成，产物落盘已验证」。
+另用同一模型对照 `v0.2.0`（`c37cdb4`）和 `5e31db4`。六条路径按 issue 记载的大小模拟，
+报告大小未知，补设为 4096 字节。在这组条件下，两版各回放 5 次，均返回 `block_with_feedback`。
 
 **基线（2026-06-29，HttpDriver 路径 / temp=0）：12 PASS / 0 FAIL，可复现（连跑两次一致）。**
 
