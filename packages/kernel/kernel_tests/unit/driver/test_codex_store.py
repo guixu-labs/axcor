@@ -10,6 +10,7 @@ from workflow_controller.driver import codex_store
 from workflow_controller.driver.hooks import SubagentProgressBridge
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 from workflow_controller.driver.codex_store import (
@@ -23,6 +24,16 @@ from workflow_controller.driver.hooks import DriverHooks
 
 PARENT_ID = "parent-1"
 CHILD_ID = "child-1"
+
+
+async def wait_until(condition: Callable[[], bool], timeout: float = 1.0) -> None:
+    """等待条件成立，避免时间敏感测试依赖固定睡眠。"""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"Condition was not met within {timeout}s")
 
 
 def write_rollout(
@@ -99,12 +110,12 @@ async def test_monitor_buffers_until_start_then_streams_and_completes(tmp_path):
             "states": {},
         }
     )
-    await asyncio.sleep(0.05)
+    expected_initial_progress = [{"type": "thinking", "text": "想"}]
+    await wait_until(lambda: monitor._children[CHILD_ID].buffer == expected_initial_progress)
     assert progress == []
 
     await monitor.notify_subagent_started(CHILD_ID)
-    await asyncio.sleep(0.05)
-    assert progress == [(CHILD_ID, [{"type": "thinking", "text": "想"}])]
+    assert progress == [(CHILD_ID, expected_initial_progress)]
 
     rollout = find_rollout_file(tmp_path, CHILD_ID)
     assert rollout is not None and rollout_meta_matches(rollout, CHILD_ID, PARENT_ID)
@@ -162,12 +173,14 @@ async def test_monitor_buffers_until_start_then_streams_and_completes(tmp_path):
             )
         )
         file.write(record(6, "event_msg", {"type": "task_complete"}))
-    await asyncio.sleep(0.05)
-    assert [message["type"] for message in progress[-1][1]] == [
+    expected_final_types = [
         "tool_use",
         "tool_result",
         "text",
     ]
+    await wait_until(
+        lambda: [message["type"] for message in progress[-1][1]] == expected_final_types
+    )
     assert progress[-1][1][1]["tool_use_id"] == "call-1"
     assert progress[-1][1][1]["content"] == "a.py"
     assert monitor._children[CHILD_ID].is_completed
