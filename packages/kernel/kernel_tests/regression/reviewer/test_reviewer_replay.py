@@ -186,7 +186,7 @@ _FIXTURES = _load_fixtures()
 
 
 def _stage_disk(fixture: dict[str, Any], tmp_root: Path) -> Path:
-    """Stage declared paths with fixture-specific or generic file content."""
+    """Stage paths with literal content or generated content of the requested size."""
     staged = fixture.get("staged_disk")
     if staged is None:
         return Path(fixture["sandbox_root"])
@@ -198,7 +198,8 @@ def _stage_disk(fixture: dict[str, Any], tmp_root: Path) -> Path:
             full.mkdir(parents=True, exist_ok=True)
         else:
             full.parent.mkdir(parents=True, exist_ok=True)
-            if content is None:
+            size = content if type(content) is int else None
+            if content is None or size is not None:
                 content = (
                     f"# {rel_path}\n\n"
                     "Auto-generated fixture content representing a completed, "
@@ -206,7 +207,14 @@ def _stage_disk(fixture: dict[str, Any], tmp_root: Path) -> Path:
                     "text so the artifact-facts truth table classifies this file as "
                     "non-stub.\n"
                 )
-            full.write_text(content, encoding="utf-8")
+            if size is None:
+                full.write_text(content, encoding="utf-8")
+            else:
+                if size < 0:
+                    raise ValueError(f"staged_disk size for {rel_path!r} must be non-negative")
+                data = content.encode("utf-8")
+                copies, remainder = divmod(size, len(data))
+                full.write_bytes(data * copies + data[:remainder])
     return tmp_root
 
 

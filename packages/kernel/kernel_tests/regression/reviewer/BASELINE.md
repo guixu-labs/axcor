@@ -51,16 +51,6 @@ exit，断言聚焦在 `selected` 选对了哪个选项（`auq_must_select_one_o
 
 ## 当前基线状态
 
-**#111 回放范围**：fixture 14 使用 issue 补充的完整末条回复和原始 reviewer goal，
-并在临时目录模拟回复所引文件均已落盘。原始用户任务要求模型适配、TPOT 小于 20 ms、
-Stage 4 用 aisbench 执行 GPQA 测评以及 TP=8。通用 Stop Hook 传入末条回复、reviewer goal
-与文件事实，原始用户任务要求用于理解本用例的期望，未额外注入回放 prompt。
-用例连续调用模型，任意一次提前放行都视为回归失败。
-2026-11-27 在 `5e31db4` 上用 `deepseek-v4-pro` 回放，观测到 `block_with_feedback`
-和 `let_exit` 两种结果。放行理由为「全部必需项完成，产物落盘已验证」。
-另用同一模型对照 `v0.2.0`（`c37cdb4`）和 `5e31db4`。六条路径按 issue 记载的大小模拟，
-报告大小未知，补设为 4096 字节。在这组条件下，两版各回放 5 次，均返回 `block_with_feedback`。
-
 **基线（2026-06-29，HttpDriver 路径 / temp=0）：12 PASS / 0 FAIL，可复现（连跑两次一致）。**
 
 **待重跑（2026-11-25）**：本次改动新增 fixture 13（外部设备占用阻塞必需项 → 必须
@@ -89,7 +79,7 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 1. 在 `fixtures/` 加 `NN_<kind>_<short>.yaml`（`kind` = `stop_hook` / `auq`）。
 2. 字段：`name` / `kind` / `description`（写清被测的决策逻辑）/ `worker_context`（stop）
    或 `auq_questions`（auq）/ `staged_disk` / `expected`。
-   `staged_disk` 可用路径列表生成通用文件和目录，或用「相对路径 → 正文」映射提供具体文件内容。
+   `staged_disk` 可用路径列表生成通用文件和目录，或用「相对路径 → 正文或非负字节数」映射提供具体内容或指定生成文件的大小。
    用例自述提到可核对的章节或交付内容时，应提供与自述一致的正文，以免模拟文件的体量或内容影响判定。
 3. `expected`：STOP 用 `action` + `feedback_must_include` / `feedback_must_not_include`；
    AUQ 用 `action`（恒 block）+ `auq_must_select_one_of` / `auq_must_not_select`。
