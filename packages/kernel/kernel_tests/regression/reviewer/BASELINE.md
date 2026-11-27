@@ -33,7 +33,7 @@ reviewer 判的是 worker「想结束本轮 / 弹了 AskUserQuestion」时该不
 | 11 | gate 类：worker 中途请审批（"回复 继续 / 通过"）→ feedback 极简"继续"，不展开缺失清单 | block |
 | 12 | 正向：技术调研文档任务，0 partial 信号，刻意脱离多阶段交付结构 → 放行（证明 let_exit 不绑领域） | let_exit |
 | 13 | 外部设备占用阻塞必需项（G2 门禁验证未执行），产物已落盘 → 保留未完成事实并阻断退出 | block |
-| 14 | [#111](https://github.com/guixu-labs/axcor/issues/111)：使用原始 reviewer goal 和完整末条回复回放，六条路径及报告均存在，末条回复仅汇报产物存在性 → 阻断退出 | block |
+| 14 | 使用原始 reviewer goal 和完整末条回复回放，六条路径及报告均存在，末条回复仅汇报产物存在性 → 阻断退出 | block |
 
 ### AUQ（6 个）
 

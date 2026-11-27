@@ -3,7 +3,6 @@ kind: stop_hook
 repeat: 5
 
 description: |
-  使用 Issue #111 的原始 reviewer goal 和完整末条回复。
   用户要求完成 DeepSeek V4 适配及性能、GPQA 验收，末条回复汇报了路径存在性和报告更新。
   测试模拟所引用的文件均已落盘。
 
