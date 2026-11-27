@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""opencode.db 只读访问原语：路径解析、只读连接、行查询与 part 解码。
+"""opencode.db 只读访问原语：路径解析、只读连接与 part 归一。
 
-驱动流式读取与检查点重放共用的单一定义处；只依赖标准库。
+驱动流式读取的定义处；只依赖标准库。
 """
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from pathlib import Path
@@ -44,36 +43,6 @@ def open_ro_db(path: Path) -> sqlite3.Connection | None:
         con.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         return con
     except sqlite3.Error:
-        return None
-
-
-def fetch_rows(
-    sql: str,
-    params: tuple[Any, ...] = (),
-    env: dict[str, str] | None = None,
-) -> list[tuple[Any, ...]]:
-    """按 env 定位 opencode.db 执行只读查询；库缺失/锁/漂移均返回空列表。"""
-    path = opencode_db_path(env)
-    if not path.is_file():
-        return []
-    con = open_ro_db(path)
-    if con is None:
-        return []
-    try:
-        return con.execute(sql, params).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        con.close()
-
-
-def parse_part(raw: str | None) -> dict[str, Any] | None:
-    """解码 part 的 data JSON 串；空值或解码失败返回 None。"""
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
         return None
 
 

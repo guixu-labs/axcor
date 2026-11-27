@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""作用域检查点账本测试：建表迁移、与旧检查点表并存、行读写与形态校验。
-
-旧 `checkpoints` 表由 session 导入能力落行，列集沿用已退役插件的十五列形状。
-并存断言以 sqlite 直查完成：在库内按旧列集复刻旧表，核对统一迁移不触碰它、
-其旧形态写入照常可用。
-"""
+"""作用域检查点账本测试：建表迁移、行读写与形态校验。"""
 
 from __future__ import annotations
 
@@ -62,35 +57,6 @@ _EXPECTED_COLUMNS = [
     "byte_size",
     "status",
 ]
-
-# 遗留插件的旧检查点表形状（退役前冻结，此处按旧列集复刻做并存断言）
-_LEGACY_CHECKPOINTS_DDL = """
-    CREATE TABLE IF NOT EXISTS checkpoints (
-        checkpoint_id    TEXT PRIMARY KEY,
-        session_id       TEXT NOT NULL,
-        iteration         INTEGER NOT NULL,
-        agent_id          TEXT,
-        agent_type        TEXT,
-        trigger           TEXT NOT NULL,
-        git_ref           TEXT,
-        event_rowid       INTEGER,
-        main_part_id      TEXT,
-        parent_checkpoint_id TEXT,
-        created_at        TEXT NOT NULL,
-        file_count        INTEGER DEFAULT 0,
-        byte_size         INTEGER DEFAULT 0,
-        status            TEXT DEFAULT 'ok',
-        inner_git         TEXT DEFAULT ''
-    )
-"""
-
-_LEGACY_INSERT = (
-    "INSERT OR REPLACE INTO checkpoints "
-    "(checkpoint_id, session_id, iteration, agent_id, agent_type, "
-    "trigger, git_ref, event_rowid, main_part_id, parent_checkpoint_id, "
-    "created_at, file_count, byte_size, status, inner_git) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-)
 
 
 def _checkpoint(**overrides: object) -> ScopeCheckpoint:
@@ -201,80 +167,6 @@ class TestSchemaMigration:
         with pytest.raises(RuntimeError, match="scope_checkpoints"):
             await bare.record(_checkpoint())
         bare.close()
-
-
-class TestLegacyTableCoexistence:
-    async def test_migration_leaves_legacy_table_untouched(self, db_path: Path) -> None:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(db_path) as conn:  # 插件先在库内落旧表与旧行
-            conn.execute(_LEGACY_CHECKPOINTS_DDL)
-            conn.execute(
-                _LEGACY_INSERT,
-                (
-                    "legacy-cp-1",
-                    "sess-1",
-                    3,
-                    "agent-x",
-                    "default",
-                    "subagent_stop",
-                    "refs/snap/legacy-cp-1",
-                    42,
-                    "part-9",
-                    None,
-                    "2026-11-01T00:00:00+00:00",
-                    5,
-                    100,
-                    "ok",
-                    "captured",
-                ),
-            )
-        before = _table_columns(db_path, "checkpoints")
-
-        await RunStore(db_path).list_runs()  # 统一迁移在新表上执行
-
-        assert _table_columns(db_path, "checkpoints") == before  # 旧表结构零改动
-        with sqlite3.connect(db_path) as conn:
-            row = conn.execute(
-                "SELECT checkpoint_id, git_ref FROM checkpoints WHERE checkpoint_id = 'legacy-cp-1'"
-            ).fetchone()
-            assert row == ("legacy-cp-1", "refs/snap/legacy-cp-1")
-            tables = {
-                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            }
-        assert {"checkpoints", "scope_checkpoints"} <= tables  # 两表并存
-
-    async def test_legacy_insert_still_works_after_migration(
-        self, store: CheckpointStore, db_path: Path
-    ) -> None:
-        with sqlite3.connect(db_path) as conn:  # 插件在迁移后的库内建旧表并旧形态写入
-            conn.execute(_LEGACY_CHECKPOINTS_DDL)
-            conn.execute(
-                _LEGACY_INSERT,
-                (
-                    "legacy-cp-2",
-                    "sess-1",
-                    4,
-                    "agent-y",
-                    "default",
-                    "subagent_stop",
-                    None,
-                    None,
-                    None,
-                    "legacy-cp-1",
-                    "2026-11-02T00:00:00+00:00",
-                    0,
-                    0,
-                    "ok",
-                    "",
-                ),
-            )
-            row = conn.execute(
-                "SELECT parent_checkpoint_id FROM checkpoints WHERE checkpoint_id = 'legacy-cp-2'"
-            ).fetchone()
-        assert row == ("legacy-cp-1",)
-
-        await store.record(_checkpoint())  # 新账本写入不受旧表牵连
-        assert (await store.get("cp-1")) is not None
 
 
 class TestCheckpointRoundtrip:

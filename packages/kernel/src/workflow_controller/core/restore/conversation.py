@@ -14,11 +14,9 @@
 
 """对话态重建编排——子代理回滚链的截断、种子与新会话绑定。
 
-过渡期平铺于 core/（P5.2 吸收 session_reconstructor 时升包为 core/restore/）。
 只做编排：message 级截断与种子在本模块，L2 定位经 transcript/ 现有面，
 会话创建经注入的 start_session_with_resume 入口（session/ 现有面），均不
-自行实现。opencode 源的 fork-db 种子随会话重建能力迁移（S5b）落地，当前
-仅支持 claude 系 JSONL 源。
+自行实现。当前仅支持 claude 系 JSONL 源。
 """
 
 from __future__ import annotations

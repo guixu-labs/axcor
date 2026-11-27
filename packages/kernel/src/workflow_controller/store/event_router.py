@@ -24,8 +24,6 @@ loop_results 与 run 键事件同库直写。
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -140,31 +138,6 @@ class EventStoreRouter:
         """
         self._store().delete_session(session_id)
 
-    def read_session_birth_traceback(self, session_id: str) -> dict[str, Any] | None:
-        """读 sessions 表行的 birth_traceback（须在该行被删前调用）。"""
-        if not session_id:
-            return None
-        try:
-            con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            try:
-                row = con.execute(
-                    "SELECT plugin_metadata FROM sessions WHERE id = ?",
-                    (session_id,),
-                ).fetchone()
-            finally:
-                con.close()
-            if row and row[0]:
-                try:
-                    pm = json.loads(row[0])
-                except (ValueError, TypeError):
-                    return None
-                bt = (pm.get("agent_traceback") or {}).get("birth_traceback")
-                if isinstance(bt, dict):
-                    return bt
-        except (sqlite3.Error, OSError):
-            return None
-        return None
-
     def snapshot_event_cursor(self) -> str:
         return str(self._store().get_max_event_id_sync())
 
@@ -223,9 +196,6 @@ class EventStoreRouter:
         fields = dict(kwargs)
         fields["id"] = session_id
         await self._store().upsert_roster(fields)
-
-    async def get_session(self, session_id: str) -> dict[str, Any] | None:
-        return await self._store().get_session(session_id)
 
     def get_session_sync(self, session_id: str) -> dict[str, Any] | None:
         return self._store().get_session_sync(session_id)

@@ -151,19 +151,11 @@ def _limit_rotation_args(event: Event) -> tuple[str, datetime | None, str]:
     return scope, reset_at, str(signal.get("source") or "")
 
 
-def _preset_resume_session(
-    session: Session,
-    resume_sdk_session_id: str | None,
-    initial_current_iteration: int | None,
-) -> None:
-    """激活前预设 resume 位与迭代计数（首轮 query 恢复种子会话）。"""
+def _preset_resume_session(session: Session, resume_sdk_session_id: str | None) -> None:
+    """激活前预设 resume 位（首轮 query 恢复种子会话）。"""
     if resume_sdk_session_id:
         session.sdk_session_id = resume_sdk_session_id
         session.mark_resume_next()
-    if initial_current_iteration is not None:
-        # Transparent replay: align iteration counter with origin's checkpoint
-        # so Jinja {{ iteration }} matches the LLM's self-perceived progress.
-        session.current_iteration = int(initial_current_iteration)
 
 
 def _resolve_evaluator(

@@ -24,11 +24,9 @@ from workflow_controller.transcript.claude_jsonl_out import (
 )
 from workflow_controller.transcript.opencode_store import (
     BUSY_TIMEOUT_MS,
-    fetch_rows,
     normalize_part,
     open_ro_db,
     opencode_db_path,
-    parse_part,
 )
 from workflow_controller.transcript.sources import (
     TranscriptSource,
@@ -50,12 +48,10 @@ __all__ = [
     "TokenUsage",
     "ToolCallInfo",
     "TranscriptSource",
-    "fetch_rows",
     "find_opencode_db",
     "normalize_part",
     "open_ro_db",
     "opencode_db_path",
-    "parse_part",
     "resolve_roster_source",
     "resolve_transcript_source",
     "write_opencode_session",

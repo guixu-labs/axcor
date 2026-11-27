@@ -152,10 +152,9 @@ class SessionConfig(BaseModel):
     context_threshold_pct: float | None = Field(default=None, gt=0, le=100)
     subagent_context_threshold_pct: float | None = Field(default=None, gt=0, le=100)
     context_window: int | None = Field(default=None, gt=0)
-    # 子进程环境变量覆盖（per-session，traceback 重放用）：driver 起 opencode/claude 子进程
-    # 时把这些 key 注入 proc_env（覆盖 os.environ）。traceback 重放靠它把 worker 的
-    # ``XDG_DATA_HOME`` 指向 ``<fork_cwd>/.workflow-controller``，使 opencode.db 落在 fork 独立路径
-    # （隔离 + 嵌套重放友好）。非重放场景留空。
+    # 子进程环境变量覆盖（per-session）：driver 起 opencode/claude 子进程时把这些 key
+    # 注入 proc_env（覆盖 os.environ）。子代理回滚的恢复会话靠它把 ``CLAUDE_CONFIG_DIR``
+    # 指向恢复种子所在的配置目录（core/restore/conversation.py）；其余场景留空。
     env_overrides: dict[str, str] = {}
     # run 归属（宿主级 run 记账层，ARCHITECTURE.md「Run 身份」）：解释器起节点
     # session 时传入；内核照存不解析（argv 类比）。None = 不归属任何 run；

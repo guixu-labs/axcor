@@ -66,16 +66,6 @@ class _BlockLiteralDumper(yaml.SafeDumper):
 _BlockLiteralDumper.add_representer(str, _str_representer)
 
 
-def _is_traceback_fork_session(session: Any) -> bool:
-    """是否为检查点重放 fork session（据 birth_traceback.fork_root 判定）。"""
-    try:
-        pm = getattr(session, "plugin_metadata", None) or {}
-        bt = (pm.get("agent_traceback") or {}).get("birth_traceback") or {}
-        return bool(bt.get("fork_root"))
-    except Exception:
-        return False
-
-
 def _transient_roots() -> tuple[Path, ...]:
     """系统临时区根集合（resolved 去重）。
 
@@ -297,8 +287,8 @@ class ConfigAPI:
         self.save()
 
     def get_recent_dirs(self) -> list[str]:
-        """合并 recent_dirs.json（用户手选，recency 优先）+ pool 中非 fork session 的
-        ``config.cwd``，去重返回统一列表。
+        """合并 recent_dirs.json（用户手选，recency 优先）+ pool 中 session 的持久项目
+        目录 ``config.cwd``，去重返回统一列表。
 
         用户手选目录在前、session 目录去重补充在后；session 目录不挤占
         ``RECENT_DIRS_MAX`` 上限。随 ``get_config_dict`` → ``config_update`` SSE 推送。
@@ -582,18 +572,17 @@ class ConfigAPI:
         )
 
     def _collect_session_cwds(self) -> list[str]:
-        """收集 pool 中非 fork session 的持久项目目录 cwd（去重、保留顺序）。
+        """收集 pool 中 session 的持久项目目录 cwd（去重、保留顺序）。
 
-        fork session（birth_traceback.fork_root）的隔离 cwd 不并入顶层——这是
-        session 级语义判定；其余 cwd 一律经卫生谓词过滤（绝对、真实存在、非系统
-        临时区——ghost session 指向已被删除/清理的目录时不再污染「最近项目」）。
+        cwd 一律经卫生谓词过滤（绝对、真实存在、非系统临时区——ghost session
+        指向已被删除/清理的目录时不再污染「最近项目」）。
         """
         out: list[str] = []
         seen: set[str] = set()
         try:
             for s in self._orch.pool.list_sessions():
                 cwd = getattr(getattr(s, "config", None), "cwd", "") or ""
-                if _is_traceback_fork_session(s) or not _is_persistent_project_dir(cwd):
+                if not _is_persistent_project_dir(cwd):
                     continue
                 if cwd not in seen:
                     seen.add(cwd)

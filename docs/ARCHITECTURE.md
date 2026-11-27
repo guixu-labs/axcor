@@ -445,7 +445,7 @@ Driver (ABC)
 
 > **Hook Server 启动**：启动时从命令运行目录下的 `workflow-controller-config.yaml` 读取 `hook_server`。设置页保存该文件，下次启动按新的配置监听。`hook_server.enabled` 默认为 `true`，监听地址默认为 `localhost:18765`。启用后首次绑定失败即终止 Workflow Controller 启动。`boot()` 在共享 API 边界把 Hook Server 绑定错误转换为 `BootError`，Web 和 headless 各自呈现启动失败；CLI `main()` 不感知 Hook Server 的底层异常。Web 和 headless 均以退出码 3 退出并报告监听地址和系统错误，headless 在标准输出写入 JSON 错误事件。显式设为 `false` 时可跳过监听，启动时也会跳过插件装载。Claude CLI 的 Stop 审核和工具提问经 HTTP 回调进入控制器。Claude SDK 和 OpenCode 的 reviewer 回调走进程内通道。
 
-> **overlay 注册表外溢剥离**（阶段 A）：opencode-only 的 overlay 状态（per-session + per-project 的 subagent hints + 全局 instructions）原活在 `orchestrator` 的 4 个 dict + 14 个方法里（SDK/CLI 永远空跑）。现抽到 `core/overlay_registry.py` 的 `OverlayRegistry`：orchestrator 持 `self._overlays`，公开方法降为一行转发、新增 `overlays` 属性供直接访问；`start_session_with_config` / `start_session_with_resume` 经 `transfer_project_overlays` / `transfer_session_overlays` 注入。opencode driver 的 session 标题更新（原 `orchestrator._update_opencode_title` 直接 `sqlite3.connect` opencode DB）下沉为 driver-agnostic 的 `Driver.update_session_title(sdk_id, name)`——orchestrator 只轮询 `session.sdk_session_id` 后委托 driver（SDK/CLI noop），不再触碰 opencode 的 sqlite3。opencode DB 路径解析（`_resolve_opencode_db_path`）随之归入 `driver/opencode.py`，`session_api` 的只读/导入 helper 改从 driver 包 import。
+> **overlay 注册表外溢剥离**（阶段 A）：opencode-only 的 overlay 状态（per-session + per-project 的 subagent hints + 全局 instructions）原活在 `orchestrator` 的 4 个 dict + 14 个方法里（SDK/CLI 永远空跑）。现抽到 `core/overlay_registry.py` 的 `OverlayRegistry`：orchestrator 持 `self._overlays`，公开方法降为一行转发、新增 `overlays` 属性供直接访问；`start_session_with_config` / `start_session_with_resume` 经 `transfer_project_overlays` 注入。opencode driver 的 session 标题更新（原 `orchestrator._update_opencode_title` 直接 `sqlite3.connect` opencode DB）下沉为 driver-agnostic 的 `Driver.update_session_title(sdk_id, name)`——orchestrator 只轮询 `session.sdk_session_id` 后委托 driver（SDK/CLI noop），不再触碰 opencode 的 sqlite3。opencode DB 路径解析（`_resolve_opencode_db_path`）随之归入 `driver/opencode.py`，`session_api` 的只读/导入 helper 改从 driver 包 import。
 
 > **subagent 跟踪剥离**（阶段 B）：在途子代理追踪（`_subagent_status` dict）+ `_on_subagent_start/progress/stop` 三个 `DriverHooks` callback + `SUBAGENT_*` 事件发射 + WAITING_RETRY 精确唤醒（在途归零即 `wake_retry()` 提前唤醒，不等满 600s）原活在 `orchestrator`。现抽到 `core/subagent_tracker.py` 的 `SubagentTracker`（OverlayRegistry 风格：构造注入 `bus`/`pool`/`loop_getter`；`on_start/on_progress/on_stop` **即** `DriverHooks` 的 `on_subagent_*` callback——发射事件 + 维护在途状态，非 bus observer；`make_driver_hooks` 直接绑 tracker 方法）。reviewer 经 `in_flight(session_id)` 读在途状态：Stop 时在途子代理非空则直接放行本次暂停（`action="stop"`，不调 reviewer LLM），原查询继续等子代理结果；在途清空后下一次 Stop 才恢复 LLM 判定。CLI↔Workflow Controller session 解析器（`_cli_to_workflow_controller_session` / `_register_session` / `resolve_cli_session_id`）**留 orchestrator**——被 stop-hook、AUQ pre-tool-use 等非 subagent 路径共用，且 `_register_session` 缠 `sdk_session_id` 持久化 + 是 `ITERATION_START` 的 bus observer，非 subagent 专属。
 
@@ -589,11 +589,9 @@ def _register_interceptors(self, ctx):
     ctx.bus.intercept("iteration_boundary", self._on_iteration_boundary_intercept, priority=10)
 ```
 
-> **检查点重放与会话导入（内核能力）**：单会话回溯（检查点、重放、导入）由内核 `core/session_traceback.py` 与 `core/restore/` 承载——重放按源会话配置、原生 session ID 与 L2 文件判定源 runtime 并校验同 runtime 续跑；Claude 系源会话从 JSONL 找到检查点前匹配的 Agent 调用，截断后改写 session ID 与路径，写入 fork 独立的配置目录；OpenCode 源走隔离 `opencode.db`。历史快照仓（`.workflow-controller/snapshots`）按目录约定直连读取，旧 `checkpoints` 表经兼容读取器访问。`SessionTracebackHost` 的宿主端口（会话查找、持久化记录读、resume 起 session、事件批量写、hook 配置写等）由 `Orchestrator` 构造时直接注入，不经 `PluginServices`；旧 `agent_traceback` 插件独占的 SDK 端口与回调（持久化记录读、事件库寻址、创建/resume 起 session、hook 配置写入、runtime 解析、最近项目移除，以及 `EventStoreRouter` 的插件自开连接寻址面与 session 删除回调注册面）随插件退役一并删除。
+> **单会话回溯（内核能力，仅工作区模式）**：单会话回溯由 `core/session_workspace.py`（会话树接入、终态三方同步、子代理级回滚）与 `core/restore/conversation.py`（对话态重建编排：message 级截断、Claude 系 JSONL 种子、经 `start_session_with_resume` 创建并绑定恢复会话）承载。快照代能力——历史快照仓（`.workflow-controller/snapshots`）读取、旧 `checkpoints` 表兼容读取、快照代检查点重放——与外部 session db 文件重建导入（import-db）已退役删除：旧表的唯一在册写入方是导入能力，删除后读取与重放面只剩读取已退役插件时代的存量数据，且两仓均无调用方。旧 `agent_traceback` 插件独占的 SDK 端口与回调（持久化记录读、事件库寻址、创建/resume 起 session、hook 配置写入、runtime 解析、最近项目移除，以及 `EventStoreRouter` 的插件自开连接寻址面与 session 删除回调注册面）随插件退役一并删除。
 
-> **session 删除清理链路**：`SessionAPI.delete` 在 `pool.remove` 前捕获 `birth_traceback` 透传进 `session_delete` 事件 data（溯源载荷；消费面在路由/清理侧）——
-> - **重放 fork session**（`birth_traceback.fork_root`）：fork 隔离 tempdir 的孤儿清理由内核启动期 `WorkspaceResidueReaper`（`core/workspace/residue_reaper.py`）承接——tempdir 前缀 `workflow-controller-tb-*`、近期活动会话引用的目录受保护，超 TTL 回收；工作区残留树（`.workflow-controller/scopes/<sid>/`）与检查点行同点回收。
-> - **重建 session**（`birth_traceback.reconstructed_from`，无 `fork_root`）：溯源标记 `created_git_dir` / `created_opencode_dir` 随会话持久化，供删除清理判定。
+> **session 删除清理链路**：`delete` 的 `clean_reconstruct` 查询参数（`workflow_controller` / `all` / 省略）经 `SessionAPI.delete` 校验后透传进 `session_delete` 事件 data（消费面在路由/清理侧；该形参是控制台删除路由按关键字传参的契约面）。崩溃窗口遗留的工作区残留树（`.workflow-controller/scopes/<sid>/`：树已落盘、会话已消失）连同其检查点行与作用域账本行，由内核启动期 `WorkspaceResidueReaper`（`core/workspace/residue_reaper.py`）按 TTL 回收（默认 7 天，窗口内可深度恢复续用；活动集不可判定时整体跳过）。
 >
 > `delete` 返回 `{ok, deleted_session_ids}`。`SessionAPI._delete_one` 顺序为 `pool.remove → reclaim_deleted_session_affiliation → bus.emit(session_delete) → event_router.delete_session`——emit 在前使事件落正确项目库，delete_session 随即清掉它，避免孤儿事件行；归属回收与名册删除同点（隐式归属连行带 run 幂等回收，显式 run 的成员行是调用方的记录、不连坐删——与 boot 正向孤儿回收同一判定），删除即清账、不等 boot 兜底（名册全删空时 boot 兜底不触发）。`EventStoreRouter.delete_session` 同时删 default DB（metadata owner）+ 项目 DB（事件），防止重启后 `load_sessions` 从残留 metadata 行复活已删 session。
 
@@ -627,7 +625,7 @@ def _register_interceptors(self, ctx):
 
 
 
-> **历史快照仓与内部 git 状态（兼容读取面）**：旧 snapshot 模式把工作目录镜像进会话原目录旁的快照仓（`.workflow-controller/snapshots`），用户内部 git 状态以保留路径 `working/.workflow-controller-inner-git/` 随工作树同一 commit 落库。内核兼容读取（`core/workspace/repository.py` 的 `legacy_snapshot_*`）按目录约定直连这些历史仓做只读列表/取文件/恢复；内核工作区模式的基线导入沿用同一保留路径约定镜像用户 `.git`。
+> **内部 git 状态的保留路径**：内核工作区模式的基线导入把用户 `.git` 镜像为保留路径 `.workflow-controller-inner-git/`（随工作树同一 commit 落基线）。旧 snapshot 模式的快照仓（`.workflow-controller/snapshots`）及其兼容读取面已退役，存量目录原样留存、内核不再访问。
 
 #### Graph Runner（`plugins/graph/`）
 
@@ -807,15 +805,14 @@ orch.shutdown()
 
 > **主机本地目录（`cfg_dir`，与 `auth_state.json` 同目录，`platformdirs.user_config_dir("workflow-controller")`）**：存放与「本机」绑定的状态：
 > - `auth_state.json` — auth 轮换状态（mode / active_index / providers / reset_at）；
-> - `recent_dirs.json` — 侧边栏「最近项目」列表来源（recency 排序、上限 10）。`ConfigAPI.get_recent_dirs()` 合并 `recent_dirs.json` + pool 中非 fork session 的 cwd（去重、recency 优先），随 `config_update` SSE 推送，前端只读；重启不丢（json 落盘），SSH 同 origin 时各主机独立。只有「浏览/添加项目」（DirPicker）或 import-db 登记才写 json；点击目录只切换 `project_dir` 指针，不落 json。
+> - `recent_dirs.json` — 侧边栏「最近项目」列表来源（recency 排序、上限 10）。`ConfigAPI.get_recent_dirs()` 合并 `recent_dirs.json` + pool 中 session 的持久项目目录 cwd（去重、recency 优先），随 `config_update` SSE 推送，前端只读；重启不丢（json 落盘），SSH 同 origin 时各主机独立。只有「浏览/添加项目」（DirPicker）才写 json；点击目录只切换 `project_dir` 指针，不落 json。
 >
-> **「最近项目」的 cwd 来源**（`ConfigAPI._collect_session_cwds` 收集 pool 中**非 fork session** 的 `config.cwd`，`.` 哨兵除外）：
-> - **跳过 fork、并入普通/重建 session**：fork session 的 cwd 是 `workflow-controller-tb-*` 临时目录（`<fork_root>/cwd`），不进侧边栏（在 Dashboard 按 `logicalProjectDir` 归到 origin 项目下）。普通/重建 session 的 cwd 是真实目录，进侧边栏列表。条目 ✕ 只 `remove_recent_dir`；若该 cwd 下仍有 session，`_collect_session_cwds` 会推回（防误删有会话的项目）。
+> **「最近项目」的 cwd 来源**（`ConfigAPI._collect_session_cwds` 收集 pool 中 session 的 `config.cwd`，`.` 哨兵除外）：
+> - **只并入持久项目目录**：session 的 cwd 一律经卫生谓词过滤（绝对、真实存在、非系统临时区——ghost session 指向已被删除/清理的目录时不再污染「最近项目」）。条目 ✕ 只 `remove_recent_dir`；若该 cwd 下仍有 session，`_collect_session_cwds` 会推回（防误删有会话的项目）。
 > - **fork 按逻辑归属归组**（`DashboardView.logicalProjectDir`）：fork 的 `config.cwd` 是 `workflow-controller-tb-*` 隔离 tempdir，前端按 `origin_session_id` 在 sessions 列表查根 origin 的 `project_dir` 作分组（`origin_session_id` 在 fork 创建时已解析到根）。
 > - **侧边栏扁平一层**（`AppSidebar`）：只列真实项目目录（key=`dir:<cwd>`），点击切换 `project_dir` 指针；fork session 在 Dashboard 展示。
 > - **Dashboard 过滤改用 `logicalProjectDir`**（`DashboardView`）：`sessions.filter(s => logicalProjectDir(s) === projectDir)`，点进 origin 项目能看到其全部 fork。
-> - **fork / 重建 session 删除对称清理 `recent_dirs.json`**：fork tempdir cwd 若被误登记进 json（旧版残留 / 用户手选），删 session 时一并 `remove_recent_dir`（与重建对称），否则侧边栏留指向已清理 tempdir 的幽灵条目——该卫生谓词属路由层（控制台发行包装配），内核删除事件载荷保留溯源字段供其消费。
-> - **从 cannbot db 重建的 session 目录持久登记**：`POST /api/sessions/import-db` 重建成功后把 `target_cwd` 写入 `recent_dirs.json`。重建 session 的账面与检查点均落守护进程库（重启可还原），`target_cwd` 只承载会话态/文件态产物；session 删除后其 cwd 失去收集来源 → 侧边栏丢失该项目，显式登记兜底运行期可见。
+> - **fork 与重放会话已退役**：内核不再创建快照代重放 fork 会话与 import-db 重建会话，上述前端归组逻辑对存量会话仍然成立、对新会话退化为按 `project_dir` 分组。
 
 ### Insight 启动命令（控制台侧）
 

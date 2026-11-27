@@ -563,45 +563,6 @@ class RunAPI:
         except LookupError as e:
             raise RunApiSessionNotFoundError(str(e)) from e
 
-    async def list_session_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
-        """单会话两代检查点合并查询：工作区模式行 + 快照代历史行（标注 generation）。"""
-        return await self._coord.list_session_checkpoints(session_id)
-
-    async def list_session_checkpoint_files(
-        self, session_id: str, checkpoint_id: str, subpath: str = ""
-    ) -> list[dict[str, Any]]:
-        """按检查点列文件态直接子项（重放前预览；两代统一入口）。"""
-        return await self._coord.list_session_checkpoint_files(session_id, checkpoint_id, subpath)
-
-    async def read_session_checkpoint_file(
-        self, session_id: str, checkpoint_id: str, path: str
-    ) -> dict[str, Any]:
-        """按检查点读单文件内容（重放前预览；两代统一入口）。"""
-        data = await self._coord.read_session_checkpoint_file(session_id, checkpoint_id, path)
-        if data is None:
-            raise RunApiSessionNotFoundError(f"文件不在检查点内：{path}（{checkpoint_id}）")
-        return data
-
-    async def replay_session_checkpoint(
-        self,
-        session_id: str,
-        checkpoint_id: str,
-        *,
-        runtime: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """从历史检查点重放新会话（旧 traceback 触发的内核等价物）。
-
-        ``overrides`` 逐字段赢过 origin 继承值（model/system_prompt/loop/
-        reviewer/initial_prompt 等）；无 overrides 时行为等价透明重放。
-        """
-        return await self._coord.replay_session_checkpoint(
-            session_id,
-            checkpoint_id,
-            runtime=runtime,
-            overrides=overrides,
-        )
-
     async def request_session_subagent_rollback(
         self,
         session_id: str,
@@ -635,50 +596,10 @@ class RunAPI:
         except LookupError as e:
             raise RunApiSessionNotFoundError(str(e)) from e
 
-    # ── 外部 session db 导入与残留清理面（HTTP 路由装配住控制台发行包）──
-
-    async def replay_session_runtime(self, session_id: str) -> dict[str, str]:
-        """探测会话源对话的 runtime（重放表单预填；不在场空串）。"""
-        return {"runtime": self._coord.replay_session_runtime(session_id)}
-
-    async def import_session_db(self, db_path: str, target_cwd: str) -> dict[str, Any]:
-        """导入外部 cannbot session db 为本仓会话（含历史检查点与导入日志）。
-
-        与插件 ``POST /api/sessions/import-db`` 同语义：同步等待到完成，
-        响应带 ``log_path``（重建目录内固定落点，可经 ``read_import_log``
-        下载；重建到 tempdir 的项目登记「最近项目」属路由层卫生谓词）。
-        """
-        db_path_raw = (db_path or "").strip()
-        target_raw = (target_cwd or "").strip()
-        if not db_path_raw or not target_raw:
-            return {
-                "ok": False,
-                "session_id": "",
-                "checkpoints": [],
-                "error": "db_path and target_cwd are required",
-                "log_path": "",
-            }
-        # 与导入编排内部同一解析（expanduser + resolve）：返回给调用方的
-        # log_path 即磁盘真实路径。
-        resolved_cwd = Path(target_raw).expanduser().resolve()
-        result = await self._coord.import_session_db(db_path_raw, str(resolved_cwd))
-        result["log_path"] = str(
-            resolved_cwd / ".workflow-controller" / "reconstruct" / "reconstruction.log"
-        )
-        return result
-
-    async def read_import_log(self, target_cwd: str) -> dict[str, Any]:
-        """读导入日志内容（重建中读到部分行、完成后全文；缺席 404）。"""
-        raw = (target_cwd or "").strip()
-        if not raw:
-            raise RunApiNotFoundError("target_cwd is required")
-        data = self._coord.read_import_log(raw)
-        if not data.get("exists"):
-            raise RunApiNotFoundError("import log not found")
-        return data
+    # ── 工作区残留清理面（HTTP 路由装配住控制台发行包）──
 
     async def reap_workspace_residue(self) -> dict[str, Any]:
-        """显式触发一轮工作区残留清理（崩溃残留树/过期检查点行/fork 孤儿）。"""
+        """显式触发一轮工作区残留清理（崩溃残留树与过期账本行）。"""
         return await self._coord.reap_workspace_residue()
 
     async def reload_run_definition(

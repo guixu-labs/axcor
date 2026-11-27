@@ -53,7 +53,7 @@ class Event:
 | | `"iteration_boundary"` | loop iteration 边界门禁 | orchestrator（`_run_iteration_boundary_gates`） | 插件 `bus.intercept("iteration_boundary", ...)`（staged_pipeline/breather）+ reviewer 拦截器，inline 返回 InterceptResult |
 | | `"gate_question"` | opencode per-query MCP gate 触发的问答 | orchestrator（`_resolve_gate_question`） | reviewer 拦截器（auto→reviewer AUQ / manual→人工队列），inline 返回 InterceptResult |
 | | `"session_complete"` | session loop 跑完（`loop_status=no`+完成 stop_reason）| orchestrator（loop 回调）| 插件 `bus.observe("session_complete", ...)`（fire-and-forget，终态快照/清理）|
-| | `"session_delete"` | session 被删除（核心表清完之后）| orchestrator（`SessionAPI.delete`）| 插件 `bus.intercept("session_delete", ...)`（**inline 拦截器**，sync 清理如 rmtree fork_root）|
+| | `"session_delete"` | session 被删除（核心表清完之后）| orchestrator（`SessionAPI.delete`）| 插件 `bus.intercept("session_delete", ...)`（**inline 拦截器**，sync 清理如 provenance store 按会话脱敏）|
 | **系统日志** | `LOG_AUTO` | orchestrator 自动审计（session 启停、hook 决策）| orchestrator | 前端展示 |
 | | `LOG_QUERY` | loop prompt 渲染 | loop engine | 前端展示 |
 | | `LOG_EVAL` | evaluator 结果 | loop engine | 前端展示 |

@@ -60,7 +60,6 @@ from workflow_controller.core.restore.conversation import (
     ConversationRestorer,
     TranscriptLocator,
 )
-from workflow_controller.core.restore.import_runner import import_log_path_for
 from workflow_controller.core.run_export import RunExportService
 from workflow_controller.core.run_host import KILL_GRACE_S as KILL_GRACE_S
 from workflow_controller.core.run_host import STOP_DRAIN_TIMEOUT_S as STOP_DRAIN_TIMEOUT_S
@@ -1365,42 +1364,6 @@ class RunCoordinator:
         """单会话树的检查点查询。"""
         return await self._orch.list_session_workspace_checkpoints(session_id)
 
-    async def list_session_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
-        """单会话两代检查点合并查询（工作区模式行 + 旧表历史行）。"""
-        return await self._orch.session_traceback.list_checkpoints(session_id)
-
-    async def list_session_checkpoint_files(
-        self, session_id: str, checkpoint_id: str, subpath: str = ""
-    ) -> list[dict[str, Any]]:
-        """按检查点列文件态子项（快照代与工作区代统一预览面）。"""
-        return await self._orch.session_traceback.list_checkpoint_files(
-            session_id, checkpoint_id, subpath
-        )
-
-    async def read_session_checkpoint_file(
-        self, session_id: str, checkpoint_id: str, path: str
-    ) -> dict[str, Any] | None:
-        """按检查点读单文件内容（快照代与工作区代统一预览面）。"""
-        return await self._orch.session_traceback.read_checkpoint_file(
-            session_id, checkpoint_id, path
-        )
-
-    async def replay_session_checkpoint(
-        self,
-        session_id: str,
-        checkpoint_id: str,
-        *,
-        runtime: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """从历史检查点重放新会话（旧 traceback 触发的内核等价物）。"""
-        return await self._orch.session_traceback.replay_checkpoint(
-            session_id,
-            checkpoint_id,
-            runtime=runtime,
-            overrides=overrides,
-        )
-
     async def restore_session_subagent(
         self,
         session_id: str,
@@ -1418,23 +1381,6 @@ class RunCoordinator:
             client_op_id=client_op_id,
             replay_dispatch=replay_dispatch,
         )
-
-    # ── 外部 session db 导入面（HTTP 路由装配住控制台发行包）──
-
-    def replay_session_runtime(self, session_id: str) -> str:
-        """探测会话源对话的 runtime（重放表单预填面）。"""
-        return self._orch.session_traceback.replay_runtime(session_id)
-
-    async def import_session_db(self, db_path: str, target_cwd: str) -> dict[str, Any]:
-        """导入外部 cannbot session db 为本仓会话（边重建边写导入日志）。"""
-        resolved = Path(target_cwd).expanduser().resolve()
-        return await self._orch.session_traceback.import_session(
-            db_path, resolved, log_path=import_log_path_for(resolved)
-        )
-
-    def read_import_log(self, target_cwd: str) -> dict[str, Any]:
-        """读导入日志内容（重建中 partial、完成后全文；缺席 exists=False）。"""
-        return self._orch.session_traceback.read_import_log(target_cwd)
 
     async def reap_workspace_residue(self) -> dict[str, Any]:
         """显式触发一次工作区残留清理（启动期自动清理的手动等价物）。"""

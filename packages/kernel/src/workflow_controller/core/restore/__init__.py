@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""对话态重建包：截断/种子/重放与 session 导入的内核能力集。
+"""对话态重建包：子代理回滚链的截断与种子编排。
 
-自 ``core/conversation_restore.py``（过渡期平铺）升包而来，吸收原插件的
-对话种子与重放编排；L2 定位经 ``transcript/`` 现有面、会话创建经注入端口，
-均不自行实现。
+L2 定位经 ``transcript/`` 现有面、会话创建经注入端口，均不自行实现。
 """
 
 from workflow_controller.core.restore.conversation import (

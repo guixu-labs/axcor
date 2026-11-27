@@ -227,9 +227,9 @@ Graph 映射（住在 graph 插件内）：executor 出生 → `PrepareScopeWork
 | IntegrationCoordinator | `core/workspace/integration.py` 新增 | 集成线、串行集成、按路径集成树、两档冲突检测（§8.1）、集成线回退；**git 子进程出口之二**（diff/merge-tree/集成树） | 新写 |
 | Manifest | `core/workspace/manifest.py` 新增 | 两维路径策略、物化/重建脚本登记、`inherit_from` 绑定 | 新写 |
 | oplog | `core/workspace/oplog.py` 新增 | 持久化操作状态机（§11）；**横切 saga 记账**——跨 workspace/checkpoint/restore 的多步操作（含会话替换、检查点落账）均经此记账；留在 workspace/ 因 PREPARED/GIT_WRITTEN 阶段强绑 Git 提交 | 新写 |
-| CheckpointStore | `core/checkpoints.py` 迁移（平铺单文件，对偶 `core/runs.py`，避免与顶层 `store/` 包重名） | 检查点账本（新表 `scope_checkpoints`，与插件旧 `checkpoints` 表并存至 P5，§7）；schema 经 RunStore 统一迁移管理；P5.2 兼容读取器平铺 `core/checkpoint_compat.py` | 插件迁移 |
-| ConversationRestorer | `core/restore/` 迁移提炼（过渡期可先平铺 `core/conversation_restore.py`，P5.2 吸收 `session_reconstructor/` 时升包） | **只做对话态重建编排**：message 级截断、seed、`start_session_with_resume` + Run/作用域/epoch 绑定；L2 读取经 `transcript/`、会话创建经 `session/`，不自行实现 | 插件迁移 |
-| SnapshotEngine | 暂留 `plugins/agent_traceback/`，最后随插件一起退役 | 兼容模式与历史快照读取 | 插件保留 |
+| CheckpointStore | `core/checkpoints.py` 迁移（平铺单文件，对偶 `core/runs.py`，避免与顶层 `store/` 包重名） | 检查点账本（新表 `scope_checkpoints`，与插件旧 `checkpoints` 表并存至 P5，§7）；schema 经 RunStore 统一迁移管理 | 插件迁移 |
+| ConversationRestorer | `core/restore/conversation.py`（自插件迁移提炼） | **只做对话态重建编排**：message 级截断、seed、`start_session_with_resume` + Run/作用域/epoch 绑定；L2 读取经 `transcript/`、会话创建经 `session/`，不自行实现 | 插件迁移 |
+| SnapshotEngine | 已随插件退役删除；历史快照兼容读取面于 2026-11-27 一并退役（§13 第 5 条） | — | 已删除 |
 | 派发屏障 | 驱动层 `DriverHooks` 扩展 | `before_subagent_dispatch`（§10） | 新增契约 |
 | Graph 集成 | graph 插件 `driver/engine.py` 修改 | cwd 注入、映射表、异步回滚 op | 修改 |
 | Web 端点 | 内核 `api/run_api.py` 扩展（CoreAPI 方法）+ 控制台发行包路由装配（`web/routes/runs_routes.py` 住控制台仓，不在本仓） | 异步回滚 op、作用域/检查点查询 | 内核修改 + 控制台仓 PR |
@@ -250,12 +250,12 @@ Graph 映射（住在 graph 插件内）：executor 出生 → `PrepareScopeWork
 | 历史视图（D6） | 默认单基线提交；可选 `history_import: readonly` 把原仓 refs/objects 只读导入 `import/original/*` |
 | 核心表 schema | 经 RunStore 统一迁移管理，不各建表 |
 
-**内部 Git 状态的恢复按目标分三种**（现有 `_restore_inner_git` 先 rmtree 再改名的做法会摧毁托管 worktree 的 `.git` 指针，不可用）：
+**内部 Git 状态的恢复按目标分三种**（把保留路径直接 rmtree 再改名回 `.git` 的做法会摧毁托管 worktree 的 `.git` 指针，不可用）：
 
 | 恢复目标 | 处理 |
 |---|---|
 | 托管作用域 worktree / 根检出 | 保留托管 `.git` 指针；原项目 git 状态只作为保留路径下的基线内容存在 |
-| 离线导出、兼容重放 fork（snapshot 兼容模式） | 可把保留路径恢复成真实 `.git`（仅限该模式） |
+| 离线导出 | 可把保留路径恢复成真实 `.git`（snapshot 兼容模式的离线重放 fork 已随快照代退役，不再是恢复目标） |
 | 单 session 终态同步回原目录（D5） | 默认不改原 `.git`；保留路径不参与同步 |
 
 ### 5.5 工作区物理布局
@@ -370,7 +370,7 @@ fix-findings 落点：`op/build/**` 为 `writer_local + rebuildable`，重建脚
 
 ## 7. 数据模型
 
-核心新建 `scope_checkpoints` 表（schema 经 RunStore 统一迁移管理）。**与插件旧 `checkpoints` 表并存至 P5**：旧表由插件以旧列集继续读写、零改动（「旧单 session 与插件路径 P5 前不动」的硬约束）——核心新列均 NOT NULL 无默认值，若加进旧表，插件并存期的旧形态 `INSERT` 会撞约束失败，且 SQLite `ALTER TABLE ADD COLUMN NOT NULL` 必须带默认值，同表迁移在并存期不成立；P5 插件删除后旧表仅经兼容读取器访问：
+核心新建 `scope_checkpoints` 表（schema 经 RunStore 统一迁移管理）。**与插件旧 `checkpoints` 表并存至 P5**：旧表由插件以旧列集继续读写、零改动（「旧单 session 与插件路径 P5 前不动」的硬约束）——核心新列均 NOT NULL 无默认值，若加进旧表，插件并存期的旧形态 `INSERT` 会撞约束失败，且 SQLite `ALTER TABLE ADD COLUMN NOT NULL` 必须带默认值，同表迁移在并存期不成立；P5 插件删除后旧表不再有任何读写方（历史快照兼容读取器已随快照代退役删除，§13 第 5 条），存量库中的旧表原样留存、统一迁移不触碰：
 
 ```sql
 CREATE TABLE IF NOT EXISTS scope_checkpoints (
@@ -819,9 +819,11 @@ PREPARED(expected_old_head)          # 意图落盘：精确旧头、两层 epoc
 1. 回溯是通用执行语义：作用域、检查点、恢复由 `core/` 提供，随 traceback 开关生效。
 2. 核心与编排插件解耦：核心只认作用域；Graph 语义经不透明引用与通用动作/通知表达；架构门禁加双向规则。
 3. 迁移期插件经 PluginServices/SDK 端口调用核心能力（不 import `core`）；若端口暴露成本过高，插件保留内部实现至退役时一次性切换——不为迁移新增架构债务。
-4. **`agent_traceback` 插件在全部开发完成且测试通过后才退役删除**：退役前需先把 SnapshotEngine、对话恢复、文件预览、历史检查点读取、清理逻辑（reaper）、`import-db`（独立为 session 导入能力）全部迁移并回归通过；`file_provenance` 不在删除范围。
+4. **`agent_traceback` 插件在全部开发完成且测试通过后才退役删除**：退役前需先把对话恢复、文件预览、清理逻辑（reaper）迁移并回归通过；`file_provenance` 不在删除范围。
 
-允许「最坏情况重写」：模块整体搬运 + 公有 API 重建；与统一模型冲突时直接在 `core/restore` 重写。判断标准：既有用户可感知行为（单 session 重放、导入）在迁移前后两点不回退。
+允许「最坏情况重写」：模块整体搬运 + 公有 API 重建；与统一模型冲突时直接在 `core/restore` 重写。
+
+5. **快照代能力退役（2026-11-27 修订）**：SnapshotEngine 的快照模式、历史检查点兼容读取、快照代检查点重放与 `import-db`（外部 session db 文件重建）不再保留。旧 `checkpoints` 表的唯一在册写入方是 `import-db`（运行会话只写 `scope_checkpoints`），删除后读取与重放面只剩读取已退役插件时代的存量数据，且两仓均无调用方；上述能力连同其 CoreAPI 方法、工作区代检查点预览面与 fork 目录回收链一并删除。单 session 回溯只保留工作区模式（作用域树 + 子代理级回滚，§9.3）。
 
 ## 14. 与 RSI 闭环的衔接
 
@@ -914,7 +916,7 @@ D2 与 D5 是固定行为、不设配置项：无法安全建区一律 fail-fast
 11. **崩溃恢复**：五类操作崩溃注入全部按精确匹配补齐/回退；「HEAD 已变化但不匹配」不误判。
 12. **基线完整性**：含未提交/未跟踪/用户 `.git` 的目录建区基线逐字节一致；用户仓未改；根目录无 OpsBot git 元数据；`history_import: readonly` 时原历史可读。
 13. **Git 核验**：agent 自行 commit/移动 ref 后精确核验报作用域损坏。
-14. **既有行为不回退**：单 session 离线重放、import-db 迁移前后回归通过；历史快照兼容读取器可读。
+14. **既有行为不回退**：已作废（2026-11-27）——单 session 离线重放、`import-db` 与历史快照兼容读取随快照代能力退役删除，见 §13 第 5 条。
 15. **单 session 可见性（D5）**：运行期原目录保持基线；live view 反映当前态；终态同步正确（回滚后终态以最终 epoch 为准）。
 16. **分叉不误删**：HEAD 已前进到后续合法提交时停止并报告分叉，绝不 reset。
 17. **子代理回滚定序**：新 session 在 Graph 新代状态持久化之前不得启动（崩溃注入验证）。

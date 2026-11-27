@@ -472,9 +472,6 @@ class EventStore:
                 (session_id, session_id),
             )
 
-    async def get_session(self, session_id: str) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._get_session_locked, session_id)
-
     def get_session_sync(self, session_id: str) -> dict[str, Any] | None:
         return self._get_session_locked(session_id)
 

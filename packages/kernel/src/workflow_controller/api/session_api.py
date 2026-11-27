@@ -823,10 +823,9 @@ class SessionAPI:
         未声明的文件(用户自己的源码等)不动;逃出 cwd 的 artifact 路径跳过(``_clean_stage_artifacts``)。
 
         Args:
-            clean_reconstruct: 重建 session 磁盘清理范围。
-                ``"workflow_controller"`` = 清 .workflow-controller，以及仅当重建创建时的 .opencode/.git；
-                ``"all"`` = rmtree 整个 target_cwd（前端须二次确认）；
-                ``None`` = 不清。recent_dirs.json 同步不受此影响。非法值抛 ValueError。
+            clean_reconstruct: 删除清理范围，原样透传进 ``session_delete`` 事件
+                （磁盘清理由路由/清理侧消费；控制台删除路由按关键字传参的契约面）。
+                仅接受 ``"workflow_controller"``、``"all"`` 或 ``None``；非法值抛 ValueError。
 
         Returns: ``{"ok": bool, "deleted_session_ids": [session_id]}``。
         """
@@ -1425,27 +1424,6 @@ class SessionAPI:
         if run.kind == RunKind.WORKFLOW:
             raise WorkflowSessionOperationError(session_id, aff.run_id)
 
-    def _session_birth_traceback(
-        self, session_id: str, session: object | None
-    ) -> dict[str, Any] | None:
-        """删除时取 birth_traceback：pool 命中直接取；否则扫 sessions 表预解析
-        （须在 delete_session 删行前完成；读失败仅记日志，不阻断删除）。
-        """
-        if session is not None:
-            pm = getattr(session, "plugin_metadata", None) or {}
-            bt = (pm.get("agent_traceback") or {}).get("birth_traceback")
-            if isinstance(bt, dict):
-                return bt
-        try:
-            return self._orch.event_router.read_session_birth_traceback(session_id)
-        except Exception:
-            logger.debug(
-                "delete: read_session_birth_traceback(%s) failed (non-fatal)",
-                session_id[:12],
-                exc_info=True,
-            )
-            return None
-
     async def _delete_one(
         self,
         session_id: str,
@@ -1453,11 +1431,7 @@ class SessionAPI:
         clean_reconstruct: str | None = None,
         deleted: list[str],
     ) -> None:
-        """删单个 session。``deleted`` 收集已删 id 供响应体聚合。
-
-        session 不在 pool 时（重启孤儿），从 event_router 预解析 birth_traceback
-        （须在 sessions 行被删除前），注入事件 data 让插件清理能拿到 fork_root。
-        """
+        """删单个 session。``deleted`` 收集已删 id 供响应体聚合。"""
         session = self._orch.pool.get(session_id)
         # 先停 worker（完整 stop 路径 reap 整个进程组），再清它的产物。
         await self._orch.stop_session(session_id)
@@ -1473,19 +1447,14 @@ class SessionAPI:
                         session_id[:12],
                         removed,
                     )
-        birth = self._session_birth_traceback(session_id, session)
         self._orch.pool.remove(session_id)
         # sessions 表行已删，归属随行回收——隐式连 run 行，显式成员行保留。
         await self._orch.reclaim_deleted_session_affiliation(session_id)
         # 必须在 delete_session 之前 emit：bus.emit 会落盘事件，若放在 delete_session
         # 之后，事件会重新写回刚清空的 DB 留下孤儿行。先 emit 再 delete_session：
         # 事件落入正确项目库，随即被清掉。拦截器（如 file_provenance 的脱敏）
-        # 在此内联完成 own 状态清理；birth_traceback / clean_reconstruct 为
-        # 溯源载荷（消费面在路由/清理侧），fork tempdir 孤儿由内核启动期
-        # residue reaper 承接。
-        #
-        # birth_traceback 经事件 data 直接透传：session 此时已从 pool 移除，
-        # 事件消费方无法再经 pool.get 拿到它。
+        # 在此内联完成 own 状态清理；clean_reconstruct 为清理范围载荷
+        # （消费面在路由/清理侧）。
         await self._orch.bus.emit(
             Event.create(
                 session_id=session_id,
@@ -1493,7 +1462,6 @@ class SessionAPI:
                 event_type="session_delete",
                 data={
                     "session_id": session_id,
-                    "birth_traceback": birth,
                     "clean_reconstruct": clean_reconstruct,
                 },
             )

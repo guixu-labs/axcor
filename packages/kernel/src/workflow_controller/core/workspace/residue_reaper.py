@@ -12,27 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""工作区残留 TTL 清理器：单会话崩溃残留树、过期账本行与 fork 孤儿目录。
+"""工作区残留 TTL 清理器：单会话崩溃残留树与过期账本行。
 
 正常路径的树回收是确定性的（终态同步干净即整树删除、会话删除即回收），
 本清理器只兜崩溃/断电窗口：守护进程死在「树已落盘、会话已消失」的组合里。
-TTL 对齐既有 fork 孤儿清理器的 7 天语义——同一窗口内可深度恢复续用（按
-tree-config.json 重建），闲置更久的残留才回收。活动集不可判定时整体跳过
-（fail-closed，宁可下次再清也不误删可恢复的树）。
+TTL 取 7 天——同一窗口内可深度恢复续用（按 tree-config.json 重建），闲置
+更久的残留才回收。活动集不可判定时整体跳过（fail-closed，宁可下次再清也
+不误删可恢复的树）。
 """
 
 from __future__ import annotations
 
-__all__ = [
-    "FORK_TEMPDIR_PREFIX",
-    "WorkspaceResidueReaper",
-]
+__all__ = ["WorkspaceResidueReaper"]
 
 import asyncio
-import contextlib
 import logging
 import shutil
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,10 +42,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# fork 孤儿目录前缀（重放/导入轨的 tempdir 约定，与插件清理器同一约定）
-FORK_TEMPDIR_PREFIX = "workflow-controller-tb-"
-
-# 默认 TTL（天）：对齐插件 fork 孤儿清理器的 7 天窗口
+# 默认 TTL（天）：窗口内残留树可深度恢复续用
 DEFAULT_TTL_DAYS = 7.0
 
 
@@ -60,7 +52,6 @@ class _ReapReport:
 
     removed_trees: int = 0
     removed_checkpoint_rows: int = 0
-    removed_fork_roots: int = 0
     skipped: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -68,7 +59,6 @@ class _ReapReport:
         return {
             "removed_trees": self.removed_trees,
             "removed_checkpoint_rows": self.removed_checkpoint_rows,
-            "removed_fork_roots": self.removed_fork_roots,
             "skipped": self.skipped,
         }
 
@@ -81,19 +71,8 @@ def _dir_is_old(path: Path, cutoff: float) -> bool:
         return False
 
 
-def _session_is_live(session: Any, cutoff: float) -> bool:
-    """会话是否仍在 TTL 活动窗内（last_activity 近期即活动，取不到保守活动）。"""
-    last_activity = getattr(session, "last_activity", None)
-    if last_activity is None:
-        return True
-    try:
-        return bool(last_activity.timestamp() >= cutoff)
-    except (AttributeError, ValueError, OSError):
-        return True
-
-
 class WorkspaceResidueReaper:
-    """单会话残留树 + 过期账本行（检查点与作用域）+ fork 孤儿目录的 TTL 清理器。"""
+    """单会话残留树 + 过期账本行（检查点与作用域）的 TTL 清理器。"""
 
     def __init__(
         self,
@@ -127,13 +106,11 @@ class WorkspaceResidueReaper:
         report = _ReapReport()
         for root in self._candidate_scan_roots(sessions):
             report = _merge_reports(report, await self._reap_scope_root(root, live_ids, cutoff))
-        report = _merge_reports(report, await self._reap_fork_roots(sessions, cutoff))
-        if report.removed_trees or report.removed_fork_roots:
+        if report.removed_trees:
             logger.info(
-                "残留清理：回收崩溃残留树 %d 棵（检查点行 %d）、fork 孤儿目录 %d 个",
+                "残留清理：回收崩溃残留树 %d 棵（检查点行 %d）",
                 report.removed_trees,
                 report.removed_checkpoint_rows,
-                report.removed_fork_roots,
             )
         return report.as_dict()
 
@@ -209,43 +186,11 @@ class WorkspaceResidueReaper:
             logger.debug("残留清理：账本行删除失败（不阻塞树回收）", exc_info=True)
             return 0
 
-    async def _reap_fork_roots(self, sessions: list[Any], cutoff: float) -> _ReapReport:
-        """清理 tempdir 里的 fork 孤儿目录（近期活动会话引用的受保护）。"""
-        report = _ReapReport()
-        protected: set[str] = set()
-        for session in sessions:
-            metadata = getattr(session, "plugin_metadata", None) or {}
-            birth = (metadata.get("traceback_replay") or {}).get("birth") or {}
-            fork_root = birth.get("fork_root") if isinstance(birth, dict) else None
-            if not fork_root or not _session_is_live(session, cutoff):
-                continue
-            with contextlib.suppress(OSError, ValueError):
-                protected.add(str(Path(str(fork_root)).resolve()))
-        tempdir = Path(tempfile.gettempdir())
-        try:
-            entries = list(tempdir.iterdir())
-        except OSError:
-            return report
-        for entry in entries:
-            if not entry.name.startswith(FORK_TEMPDIR_PREFIX) or not entry.is_dir():
-                continue
-            if str(entry.resolve()) in protected:
-                continue
-            if not _dir_is_old(entry, cutoff):
-                continue
-            await asyncio.to_thread(shutil.rmtree, entry, ignore_errors=True)
-            if entry.exists():
-                continue
-            report.removed_fork_roots += 1
-            logger.info("残留清理：回收 fork 孤儿目录 %s", entry)
-        return report
-
 
 def _merge_reports(left: _ReapReport, right: _ReapReport) -> _ReapReport:
     """合并两份结论（skipped 取先出现的非空值）。"""
     return _ReapReport(
         removed_trees=left.removed_trees + right.removed_trees,
         removed_checkpoint_rows=left.removed_checkpoint_rows + right.removed_checkpoint_rows,
-        removed_fork_roots=left.removed_fork_roots + right.removed_fork_roots,
         skipped=left.skipped or right.skipped,
     )

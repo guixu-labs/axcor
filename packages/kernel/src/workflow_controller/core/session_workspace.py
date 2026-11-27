@@ -205,28 +205,6 @@ def _list_live_entries(workspace_dir: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def _checkpoint_tree_entries(blobs: dict[str, str], subpath: str) -> list[dict[str, Any]]:
-    """把提交的路径 → blob 平面集裁成预览子项（目录在前，含内部 git 保留路径隐藏）。"""
-    prefix = f"{subpath}/" if subpath else ""
-    names: dict[str, bool] = {}
-    for path in blobs:
-        if not path.startswith(prefix):
-            continue
-        name = path[len(prefix) :].split("/", 1)[0]
-        if not name:
-            continue
-        if not subpath and name == ".workflow-controller-inner-git":
-            continue
-        is_file = len(path) == len(prefix) + len(name)
-        names[name] = names.get(name, False) or is_file
-    entries = [
-        {"name": name, "path": f"{subpath}/{name}".strip("/"), "is_dir": not is_file_only}
-        for name, is_file_only in names.items()
-    ]
-    entries.sort(key=lambda e: (not e["is_dir"], e["name"]))
-    return entries
-
-
 def _read_live_file(workspace_dir: Path, rel_path: str) -> dict[str, Any]:
     """读托管工作区内一个文件：文本优先、二进制回退 base64。"""
     target = (workspace_dir / rel_path).resolve()
@@ -322,73 +300,12 @@ class SessionWorkspaceHost:
         return payload
 
     async def list_checkpoints(self, session_id: str) -> list[dict[str, Any]]:
-        """会话树的检查点查询面（查询与回滚入口共用）。"""
+        """会话树的检查点查询面（子代理回滚入口的核对面）。"""
         entry = self._require_entry(session_id)
         from workflow_controller.core.checkpoints import checkpoint_to_dict
 
         rows = await entry.tree.checkpoints.list_for_tree(entry.tree.root_scope_id)
         return [checkpoint_to_dict(row) for row in rows]
-
-    async def checkpoint_tree(
-        self, session_id: str, checkpoint_id: str, subpath: str = ""
-    ) -> list[dict[str, Any]]:
-        """按检查点列私有仓文件态直接子项（目录在前，供预览面）。"""
-        entry = self._require_entry(session_id)
-        commit = await self._checkpoint_commit(entry, checkpoint_id)
-        if commit is None:
-            return []
-        blobs = await entry.tree.repository.tree_blob_entries(commit)
-        return _checkpoint_tree_entries(blobs, subpath.strip("/"))
-
-    async def checkpoint_file(
-        self, session_id: str, checkpoint_id: str, path: str
-    ) -> dict[str, Any] | None:
-        """按检查点读私有仓内一个文件的内容（文本优先、二进制回退 base64）。"""
-        entry = self._require_entry(session_id)
-        commit = await self._checkpoint_commit(entry, checkpoint_id)
-        if commit is None:
-            return None
-        rel = path.strip("/").lstrip("./")
-        if not rel:
-            return None
-        repository = entry.tree.repository
-        size = await repository.blob_size(commit, rel)
-        if size is None:
-            return None
-        if size > _LIVE_VIEW_MAX_FILE_BYTES:
-            return {
-                "name": rel.rsplit("/", 1)[-1],
-                "path": rel,
-                "size": size,
-                "content": "(file too large to preview)",
-                "encoding": "utf-8",
-                "truncated": True,
-            }
-        raw = await repository.blob_content(commit, rel)
-        if raw is None:
-            return None
-        try:
-            content: str = raw.decode("utf-8")
-            encoding = "utf-8"
-        except UnicodeDecodeError:
-            content = base64.b64encode(raw).decode("ascii")
-            encoding = "base64"
-        return {
-            "name": rel.rsplit("/", 1)[-1],
-            "path": rel,
-            "size": size,
-            "content": content,
-            "encoding": encoding,
-            "truncated": False,
-        }
-
-    async def _checkpoint_commit(self, entry: _SessionTreeEntry, checkpoint_id: str) -> str | None:
-        """取检查点行的文件态提交引用；行缺席或树已回收返回 None。"""
-        rows = await entry.tree.checkpoints.list_for_tree(entry.tree.root_scope_id)
-        for row in rows:
-            if row.checkpoint_id == checkpoint_id:
-                return row.workspace_commit or None
-        return None
 
     # ── 接入与复用 ────────────────────────────────────────────
 

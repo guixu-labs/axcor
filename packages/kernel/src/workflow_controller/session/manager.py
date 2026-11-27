@@ -35,7 +35,7 @@ class SessionPool:
         self._sessions: dict[str, Session] = {}
         self._configs: dict[str, SessionConfig] = {}
         self._event_router: Any = None  # EventStoreRouter, set via set_event_router()
-        # session 创建入口回调（run 归属铸造）：一切创建路径（含 import/重建旁路）都过这里
+        # session 创建入口回调（run 归属铸造）：一切创建路径都过这里
         self._affiliation_hook: Callable[[Session, SessionConfig], Awaitable[None]] | None = None
 
     @staticmethod

@@ -158,9 +158,8 @@ class Session:
         self.birth_handoff_doc: str | None = None
         self.result: str = "fail"
 
-        # Capability metadata (e.g. checkpoint replay's birth_traceback: origin
-        # session/checkpoint for fork tracking). Generic dict — capability owners
-        # manage their sub-keys; the session model is agnostic.
+        # Capability metadata (e.g. graph's node_id lineage). Generic dict —
+        # capability owners manage their sub-keys; the session model is agnostic.
         self.plugin_metadata: dict[str, dict[str, Any]] = {}
 
         # staged_pipeline per-stage review channel
@@ -558,7 +557,7 @@ class Session:
                     )
         except Exception:
             logger.debug("sdk_session_id 恢复探测失败（sqlite 读失败），保持现状")
-        # plugin_metadata 是溯源信息（birth_traceback 等），不属于运行态，reset 保留。
+        # plugin_metadata 是溯源信息（能力所有者的子键），不属于运行态，reset 保留。
 
     async def _apply_resolved_provider(self) -> None:
         """auth_rotator 解析可用 provider 并同步 config（必要时通知回调）。"""
@@ -600,9 +599,9 @@ class Session:
             else {}
         )
         model = resolve_query_model(self.config, sdk_env)
-        # Per-session env_overrides（traceback 重放注入 XDG_DATA_HOME 等）覆盖 auth_rotator
-        # 的 env：env_overrides 是会话级显式配置，应当赢。traceback 的 env_overrides 只含
-        # XDG_DATA_HOME 等 isolation key，不与 auth_rotator 的 API key 冲突。
+        # Per-session env_overrides（恢复会话注入 CLAUDE_CONFIG_DIR 等）覆盖 auth_rotator
+        # 的 env：env_overrides 是会话级显式配置，应当赢。恢复会话的 env_overrides 只含
+        # 配置目录定位 key，不与 auth_rotator 的 API key 冲突。
         env_overrides = getattr(self.config, "env_overrides", None) or {}
         if env_overrides:
             sdk_env = {**sdk_env, **env_overrides}

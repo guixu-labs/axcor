@@ -12,24 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""工作区残留 TTL 清理器测试：崩溃残留树 + 过期检查点行 + fork 孤儿目录。"""
+"""工作区残留 TTL 清理器测试：崩溃残留树 + 过期账本行。"""
 
 from __future__ import annotations
 
 import os
 import sqlite3
-import tempfile
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from workflow_controller.core.checkpoints import CheckpointStore
-from workflow_controller.core.workspace.residue_reaper import (
-    FORK_TEMPDIR_PREFIX,
-    WorkspaceResidueReaper,
-)
+from workflow_controller.core.workspace.residue_reaper import WorkspaceResidueReaper
 from workflow_controller.core.workspace.scope_ledger import ScopeLedgerStore
 
 if TYPE_CHECKING:
@@ -44,23 +39,8 @@ def _make_old(path: Path, days: float = 30.0) -> Path:
 
 
 def _live_session(sid: str, cwd: Path) -> SimpleNamespace:
-    """在池会话替身：近期活动 + 指定 cwd。"""
-    return SimpleNamespace(
-        id=sid,
-        last_activity=datetime.now(tz=UTC),
-        plugin_metadata={},
-        config=SimpleNamespace(cwd=str(cwd)),
-    )
-
-
-def _gone_session(sid: str, cwd: Path, *, idle_days: float = 30.0) -> SimpleNamespace:
-    """闲置超 TTL 的会话替身（ghost，不受 fork 保护）。"""
-    return SimpleNamespace(
-        id=sid,
-        last_activity=datetime.now(tz=UTC) - timedelta(days=idle_days),
-        plugin_metadata={},
-        config=SimpleNamespace(cwd=str(cwd)),
-    )
+    """在池会话替身：指定 id 与 cwd。"""
+    return SimpleNamespace(id=sid, config=SimpleNamespace(cwd=str(cwd)))
 
 
 def _plant_tree(original: Path, sid: str) -> Path:
@@ -234,38 +214,16 @@ async def test_managed_cwd_derived_scan_root(tmp_path: Path) -> None:
     assert not gone_tree.exists()
 
 
-async def test_fork_root_liveness_protection(tmp_path: Path, monkeypatch: Any) -> None:
-    """fork 孤儿目录：近期活动会话引用的受保护，闲置 ghost 与无名残留回收。"""
-    sandbox = tmp_path / "tmp"
-    sandbox.mkdir()
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(sandbox))
-    live_dir = sandbox / f"{FORK_TEMPDIR_PREFIX}live"
-    live_dir.mkdir()
-    (live_dir / "fork.db").write_text("x", encoding="utf-8")
-    stale_dir = sandbox / f"{FORK_TEMPDIR_PREFIX}stale"
-    stale_dir.mkdir()
-    _make_old(stale_dir)
-
+async def test_pool_unavailable_skips_entirely(tmp_path: Path) -> None:
+    """池枚举不可用（活动集不可判定）→ 整轮跳过，残留树不动（fail-closed）。"""
     original = tmp_path / "proj"
     original.mkdir()
-    live_sid = uuid.uuid4().hex
-    live = _live_session(live_sid, original)
-    live.plugin_metadata = {"traceback_replay": {"birth": {"fork_root": str(live_dir)}}}
-    report = await _reaper(tmp_path, sessions=[live], scan_roots=[original]).reap()
-
-    assert live_dir.exists()
-    assert not stale_dir.exists()
-    assert report["removed_fork_roots"] == 1
-
-    # 活动集整体不可判定 → 跳过（fail-closed）
-    stale2 = sandbox / f"{FORK_TEMPDIR_PREFIX}stale2"
-    stale2.mkdir()
-    _make_old(stale2)
-    report2 = await _reaper(
+    tree_dir = _make_old(_plant_tree(original, uuid.uuid4().hex))
+    report = await _reaper(
         tmp_path, sessions=[], pool_available=False, scan_roots=[original]
     ).reap()
-    assert report2["skipped"] == "pool enumeration unavailable"
-    assert stale2.exists()
+    assert report["skipped"] == "pool enumeration unavailable"
+    assert tree_dir.exists()
 
 
 async def test_disabled_reaper_noop(tmp_path: Path) -> None:

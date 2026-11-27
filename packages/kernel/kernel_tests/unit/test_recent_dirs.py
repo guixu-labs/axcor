@@ -88,45 +88,6 @@ def _sess(cwd: str) -> SimpleNamespace:
     return SimpleNamespace(config=SimpleNamespace(cwd=cwd))
 
 
-def _fork_sess(cwd: str, origin_cwd: str = "/real/proj") -> SimpleNamespace:
-    """模拟检查点重放 fork session（带 birth_traceback.fork_root + origin_cwd）。"""
-    return SimpleNamespace(
-        config=SimpleNamespace(cwd=cwd),
-        plugin_metadata={
-            "agent_traceback": {
-                "birth_traceback": {
-                    "fork_root": "/tmp/workflow-controller-tb-abcd",
-                    "fork_cwd": cwd,
-                    "origin_cwd": origin_cwd,
-                },
-            },
-        },
-    )
-
-
-def _reconstruct_sess(cwd: str) -> SimpleNamespace:
-    """模拟从 cannbot db 重建的 session（用 reconstructed_from 标记，无 fork_root）。"""
-    return SimpleNamespace(
-        config=SimpleNamespace(cwd=cwd),
-        plugin_metadata={
-            "agent_traceback": {
-                "birth_traceback": {
-                    "reconstructed_from": "/tmp/cannbot.db",
-                    "fork_cwd": cwd,
-                },
-            },
-        },
-    )
-
-
-def _fork_sess_no_metadata(cwd: str) -> SimpleNamespace:
-    """模拟 metadata 丢失的 fork session（cwd 在临时区内）。"""
-    return SimpleNamespace(
-        config=SimpleNamespace(cwd=cwd),
-        plugin_metadata={},
-    )
-
-
 # ── 卫生谓词 ────────────────────────────────────────────────────────────────
 
 
@@ -163,68 +124,24 @@ def test_is_transient_dir_real_gettempdir(tmp_path):
 
 
 def test_get_recent_dirs_merges_user_and_session_cwds_dedup(tmp_path, monkeypatch):
-    """用户手选 + 非 fork session cwd（普通/重建）合并：用户目录在前、追加在后、去重。"""
+    """用户手选 + session cwd 合并：用户目录在前、追加在后、去重。"""
     sb = Sandbox(tmp_path, monkeypatch)
     a, b = sb.proj("proj/a"), sb.proj("proj/b")
-    s_only, recon = sb.proj("session-only"), sb.proj("reconstructed-proj")
-    tb = sb.transient_dir("workflow-controller-tb-x/cwd")
+    s_only = sb.proj("session-only")
     sb.write_json([a, b])
     orch = _orch_with_cfg(
         tmp_path,
         sessions=[
-            _sess(b),  # 普通 session：与 json 的 b 去重
+            _sess(b),  # 与 json 的 b 去重
             _sess(s_only),  # session-only：追加在 json 之后
-            _reconstruct_sess(recon),  # 重建 session（无 fork_root）：并入顶层
-            _fork_sess(tb),  # fork：tempdir cwd 不并入顶层
         ],
     )
     api = ConfigAPI(orch, tmp_path / "saved.yaml")
 
-    assert api.get_recent_dirs() == [a, b, s_only, recon]
+    assert api.get_recent_dirs() == [a, b, s_only]
 
 
-# ── fork / ghost session 的临时区与死 cwd 不进顶层 ──────────────────────────
-
-
-def test_get_recent_dirs_excludes_traceback_fork_sessions(tmp_path, monkeypatch):
-    """fork 的 tempdir cwd 不并入顶层（metadata 判定，与目录卫生正交）。"""
-    sb = Sandbox(tmp_path, monkeypatch)
-    proj = sb.proj("real/proj")
-    tb_a = sb.transient_dir("workflow-controller-tb-aaa/cwd")
-    tb_b = sb.transient_dir("workflow-controller-tb-bbb/cwd")
-    sb.write_json([proj])
-    orch = _orch_with_cfg(
-        tmp_path,
-        sessions=[
-            _sess(proj),
-            _fork_sess(tb_a, origin_cwd=proj),
-            _fork_sess(tb_b, origin_cwd=proj),
-        ],
-    )
-    api = ConfigAPI(orch, tmp_path / "saved.yaml")
-
-    result = api.get_recent_dirs()
-
-    assert tb_a not in result and tb_b not in result
-    assert result == [proj]
-
-
-def test_get_recent_dirs_excludes_fork_with_lost_metadata(tmp_path, monkeypatch):
-    """metadata 丢失的 fork session：cwd 在临时区 → 被卫生谓词兜底（不再靠形状）。"""
-    sb = Sandbox(tmp_path, monkeypatch)
-    proj = sb.proj("real/proj")
-    leaked = sb.transient_dir("workflow-controller-tb-leaked/cwd")
-    sb.write_json([proj])
-    orch = _orch_with_cfg(
-        tmp_path,
-        sessions=[
-            _fork_sess_no_metadata(leaked),
-            _sess(proj),
-        ],
-    )
-    api = ConfigAPI(orch, tmp_path / "saved.yaml")
-
-    assert api.get_recent_dirs() == [proj]
+# ── ghost session 的临时区与死 cwd 不进顶层 ──────────────────────────────────
 
 
 def test_get_recent_dirs_excludes_dead_and_transient_ghost_cwds(tmp_path, monkeypatch):
@@ -379,7 +296,7 @@ def test_get_config_dict_includes_recent_dirs(tmp_path, monkeypatch):
     proj = sb.proj("proj/a")
     tdir = sb.transient_dir("workflow-controller-tb-z/cwd")
     sb.write_json([proj, tdir])
-    orch = _orch_with_cfg(tmp_path, sessions=[_fork_sess(tdir)])
+    orch = _orch_with_cfg(tmp_path, sessions=[_sess(tdir)])
     api = ConfigAPI(orch, tmp_path / "saved.yaml")
 
     d = api.get_config_dict()

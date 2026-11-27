@@ -260,28 +260,6 @@ class OverlayRegistry:
         if instructions:
             self._session_instructions.setdefault(session_id, []).extend(instructions)
 
-    def transfer_session_overlays(
-        self,
-        new_session_id: str,
-        source_session_id: str,
-    ) -> None:
-        """Copy a source session's hints + instructions into a new session
-        (deep-copied so the source stays intact; no-op if none). Used by
-        checkpoint replay so a hint registered on the origin session before
-        the replay reaches the new session's first query round.
-        """
-        src_hints = self._session_hints.get(source_session_id)
-        if src_hints:
-            target = self._session_hints.setdefault(new_session_id, {})
-            for stype, hints in src_hints.items():
-                target.setdefault(stype, []).extend(hints)
-        src_instr = self._session_instructions.get(source_session_id)
-        if src_instr:
-            self._session_instructions.setdefault(
-                new_session_id,
-                [],
-            ).extend(src_instr)
-
     # ── driver query seam ──────────────────────────────────────────────
 
     def get_overlays(self, session_id: str) -> dict[str, Any]:

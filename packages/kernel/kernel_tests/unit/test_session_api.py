@@ -127,31 +127,17 @@ def test_running_frozen_last_activity_still_counts():
     assert info.elapsed_seconds == pytest.approx(time.time() - created.timestamp(), abs=1)
 
 
-def test_birth_traceback_populated_from_session():
-    """SessionInfo.from_session must expose plugin_metadata (fork origin) for
-    fork visualization（birth_traceback 溯源格式的内核承载面）.
-    """
+def test_session_info_exposes_plugin_metadata():
+    """SessionInfo.from_session 透出 plugin_metadata（能力所有者的溯源子键，如图节点归属）。"""
     created = datetime.now(tz=UTC)
     s = _fake_session(SessionState.COMPLETED, created_at=created, last_activity=created)
-    s.plugin_metadata = {
-        "agent_traceback": {
-            "birth_traceback": {
-                "origin_session_id": "abc123",
-                "origin_checkpoint_id": "cp_abc123_001",
-                "forked_at": "2026-07-13T10:00:00",
-            },
-        },
-    }
+    s.plugin_metadata = {"graph": {"node_id": "n1"}}
     info = SessionInfo.from_session(s)
-    bt = info.plugin_metadata.get("agent_traceback", {}).get("birth_traceback")
-    assert bt is not None
-    assert bt["origin_session_id"] == "abc123"
-    assert bt["origin_checkpoint_id"] == "cp_abc123_001"
-    assert bt["forked_at"] == "2026-07-13T10:00:00"
+    assert info.plugin_metadata == {"graph": {"node_id": "n1"}}
 
 
-def test_birth_traceback_none_when_not_set():
-    """SessionInfo.plugin_metadata is empty for non-fork sessions."""
+def test_session_info_plugin_metadata_empty_when_not_set():
+    """未设置 plugin_metadata 的会话：SessionInfo.plugin_metadata 为空。"""
     created = datetime.now(tz=UTC)
     s = _fake_session(SessionState.IDLE, created_at=created, last_activity=created)
     s.plugin_metadata = {}
