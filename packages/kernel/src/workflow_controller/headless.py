@@ -58,10 +58,12 @@ class HeadlessRunner:
         config: AppConfig,
         config_path: str = "workflow-controller-config.yaml",
         settings_dir: str | None = None,
+        hook_port: int | None = None,
     ) -> None:
         self._config = config
         self._config_path = config_path
         self._settings_dir = settings_dir
+        self._hook_port = hook_port
         self._orchestrator: Orchestrator | None = None
         self._api: CoreAPI | None = None
 
@@ -80,6 +82,7 @@ class HeadlessRunner:
                 self._config,
                 _Path(self._config_path),
                 settings_dir=sd,
+                hook_port=self._hook_port,
             )
         except BootError as exc:
             self._emit({"event": "error", "msg": str(exc)})

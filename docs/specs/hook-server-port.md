@@ -46,12 +46,16 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 4. `ConfigAPI.update_config()` 不接受 `hook_server.port`，设置页也不展示或编辑该字段。
 5. 端口变更只能通过重启 controller 并传入新的 `--hook-port` 完成。
 
-### `effective_hook_port`
+### `boot()` 与 `effective_hook_port`
 
 1. controller 实例在启动时固化 `effective_hook_port`。
 2. 它来自 CLI 参数或默认值，不落盘、不写回 YAML。
 3. HookServer 绑定、Claude `.claude/settings.json` 与 DriverHooks 中的通用
    Hook Server URL / OpenCode file-change URL 全部从这里取值。
+4. `boot()` 暴露 `hook_port` 显式入参；headless 与直接调用方传入该参数，
+   不再通过 `WORKFLOW_CONTROLLER_HOOK_PORT` 传递。
+5. `WORKFLOW_CONTROLLER_HOOK_PORT` 仅作为 Web CLI 与其 Web 组合根 / uvicorn
+   reload 子进程之间的边界适配，尤其是 `--dev` 模式。
 
 ### Claude CLI
 
@@ -76,13 +80,15 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 
 ## 施工计划
 
-1. CLI 增加或统一 `--hook-port` 参数，写入内部环境变量 `WORKFLOW_CONTROLLER_HOOK_PORT`。
-2. Web 与 headless 组合根读取该环境变量并传入 controller。
-3. 从配置模型、ConfigAPI 与设置页移除 `hook_server.port`。
-4. HookServer 绑定与全部 hook URL 消费方统一使用 `effective_hook_port`。
-5. 补齐 Claude 与 Codex 激活前的一致性校验；Codex URL 一致性由单一构造源
+1. CLI 增加或统一 `--hook-port` 参数。
+2. headless 入口把端口显式传入 `HeadlessRunner` 与 `boot()`。
+3. Web CLI 在进程边界内使用 `WORKFLOW_CONTROLLER_HOOK_PORT`，供 Web 组合根与
+   `--dev` 下的 uvicorn reload 子进程读取。
+4. 从配置模型、ConfigAPI 与设置页移除 `hook_server.port`。
+5. HookServer 绑定与全部 hook URL 消费方统一使用 `effective_hook_port`。
+6. 补齐 Claude 与 Codex 激活前的一致性校验；Codex URL 一致性由单一构造源
    与测试守护，运行前校验位于 `_codex_hook_invocation`。
-6. 更新 `--help`、README 和 Web UI 文档。
+7. 更新 `--help`、README 和 Web UI 文档。
 
 ## 验收标准
 

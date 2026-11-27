@@ -69,9 +69,11 @@ async def boot_fake_kernel(project_dir: Path, settings_dir: Path) -> tuple[Orche
         hook_server=HookServerConfig(enabled=True),
         reviewer=ReviewerConfig(enabled=False),
     )
-    os.environ["WORKFLOW_CONTROLLER_HOOK_PORT"] = "0"
     return await boot(
-        config, project_dir / "workflow-controller-config.yaml", settings_dir=settings_dir
+        config,
+        project_dir / "workflow-controller-config.yaml",
+        settings_dir=settings_dir,
+        hook_port=0,
     )
 
 

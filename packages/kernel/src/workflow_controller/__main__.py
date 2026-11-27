@@ -160,7 +160,6 @@ def cmd_run(
     from workflow_controller.logging_config import configure_logging
 
     app_cfg = _load_app_config(config)
-    os.environ["WORKFLOW_CONTROLLER_HOOK_PORT"] = str(hook_port)
     if no_reviewer:
         app_cfg.reviewer.enabled = False
     if log_level is not None:
@@ -177,6 +176,7 @@ def cmd_run(
         app_cfg,
         config,
         settings_dir=settings_dir,
+        hook_port=hook_port,
     )
     try:
         asyncio.run(runner.run())

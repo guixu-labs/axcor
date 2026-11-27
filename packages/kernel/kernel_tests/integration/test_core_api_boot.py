@@ -37,11 +37,10 @@ from workflow_controller.core.session_run_affiliation import SessionRunAffiliati
 
 
 @pytest.mark.asyncio
-async def test_boot_consumes_hook_port_environment(tmp_path: Path, monkeypatch) -> None:
-    """boot() 读取 Web CLI 传入的 Hook Server 端口覆盖。"""
+async def test_boot_consumes_hook_port_argument(tmp_path: Path, monkeypatch) -> None:
+    """boot() 读取调用方传入的 Hook Server 端口。"""
     from workflow_controller.hooks.server import HookServer
 
-    monkeypatch.setenv("WORKFLOW_CONTROLLER_HOOK_PORT", "18999")
     monkeypatch.setattr(
         SessionRunAffiliationService,
         "recover_at_boot",
@@ -61,6 +60,7 @@ async def test_boot_consumes_hook_port_environment(tmp_path: Path, monkeypatch) 
         config,
         tmp_path / "workflow-controller-config.yaml",
         settings_dir=tmp_path,
+        hook_port=18999,
     )
     try:
         assert orchestrator.effective_hook_server_port == 18999
