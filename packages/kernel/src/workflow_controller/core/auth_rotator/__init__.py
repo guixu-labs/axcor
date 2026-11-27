@@ -54,6 +54,7 @@ from workflow_controller.core.auth_rotator.persistence import (
     ProviderValidation,
     ValidationStatus,
 )
+from workflow_controller.driver.protocol import PROBE_DISALLOWED_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -76,23 +77,6 @@ if TYPE_CHECKING:
     from workflow_controller.core.auth_rotator.settings import GlobalSettings
     from workflow_controller.core.auth_rotator.signal import LimitMatch
     from workflow_controller.session.events import Event
-
-
-#: 只读探针的禁用工具基表（auth 探测与反馈评估两轨共用，按需追加）
-PROBE_DISALLOWED_TOOLS = [
-    "Bash",
-    "Write",
-    "Edit",
-    "Skill",
-    "Task",
-    "TodoWrite",
-    "AskUserQuestion",
-    "WebFetch",
-    "WebSearch",
-    "NotebookEdit",
-    "Glob",
-    "Grep",
-]
 
 
 class AuthRotator:

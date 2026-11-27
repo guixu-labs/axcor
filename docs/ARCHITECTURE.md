@@ -422,11 +422,14 @@ Driver (ABC)
   ├── query(prompt, *, iteration, session_id, model, cwd, max_turns,
   │         allowed_tools, disallowed_tools, permission_mode="", env, hooks)
   │         → AsyncIterator[Event]
+  ├── query_for_evaluation(prompt, *, model, env) → AsyncIterator[Event]
   ├── stop() → None
   ├── update_session_title(native_session_id, name) → bool   # concrete noop
   │         default; opencode overrides (sqlite UPDATE), SDK/CLI inherit noop
   └── is_running: bool        # abstract property
 ```
+
+反馈评估通过 `Driver.query_for_evaluation()` 传入提示词、模型和 provider 环境。Driver 负责模型回退、轮数及工具权限。默认实现沿用单轮和工具禁用列表，Codex 使用 provider 模型和只读沙箱。
 
 四个实现：
 

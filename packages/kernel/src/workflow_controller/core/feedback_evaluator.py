@@ -316,8 +316,7 @@ class FeedbackEvaluator:
             files.append(str(fp))
 
     async def _call_llm(self, prompt: str) -> str:
-        from workflow_controller.core.auth_rotator import PROBE_DISALLOWED_TOOLS
-        from workflow_controller.driver.factory import create_driver, resolve_runtime
+        from workflow_controller.driver.factory import create_driver
         from workflow_controller.session.events import EventType
 
         sdk_env = (
@@ -329,35 +328,16 @@ class FeedbackEvaluator:
             else {}
         )
 
-        codex_feedback = resolve_runtime(None) == "codex_cli"
-        driver = create_driver(None, permission_mode="bypassPermissions")
-        model = (
-            self._model or sdk_env.get("ANTHROPIC_MODEL", "")
-            if codex_feedback
-            else self._model or "claude-sonnet-4-6"
-        )
-        max_turns = None if codex_feedback else 1
-        disallowed_tools = (
-            [] if codex_feedback else [*PROBE_DISALLOWED_TOOLS, "NotebookRead", "Read"]
-        )
-        permission_mode = "read-only" if codex_feedback else ""
+        driver = create_driver()
         parts: list[str] = []
         try:
-            async for event in driver.query(
-                prompt=prompt,
-                model=model,
-                max_turns=max_turns,
-                allowed_tools=[],
-                disallowed_tools=disallowed_tools,
-                permission_mode=permission_mode,
-                env=sdk_env,
-            ):
+            async for event in driver.query_for_evaluation(prompt, model=self._model, env=sdk_env):
                 if event.event_type == EventType.STEP_FINISH:
                     _warn_step_error(event)
                     break
                 if event.event_type == EventType.ASSISTANT_MESSAGE:
                     _assistant_raw_texts(parts, event.data)
         except Exception as e:
-            logger.warning("FeedbackEvaluator SDK query error: %s", e)
+            logger.warning("FeedbackEvaluator query error: %s", e)
 
         return "\n".join(parts).strip()

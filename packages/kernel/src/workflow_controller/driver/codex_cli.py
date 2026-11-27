@@ -376,6 +376,17 @@ class CodexCLIDriver(CLIDriverBase):
         """构造时给定的默认权限模式（沙箱模式）。"""
         return self._permission_mode
 
+    def query_for_evaluation(
+        self, prompt: str, *, model: str | None, env: dict[str, str]
+    ) -> AsyncIterator[Event]:
+        """Run a feedback evaluation in the read-only sandbox."""
+        return self.query(
+            prompt,
+            model=model or env.get("ANTHROPIC_MODEL", ""),
+            permission_mode="read-only",
+            env=env,
+        )
+
     @staticmethod
     async def _notify_subagent_starts(
         data: dict[str, Any] | None,

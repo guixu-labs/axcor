@@ -26,6 +26,23 @@ if TYPE_CHECKING:
     from workflow_controller.session.events import Event
 
 
+# 禁用列表供 worker 探测和反馈评估共用。
+PROBE_DISALLOWED_TOOLS = [
+    "Bash",
+    "Write",
+    "Edit",
+    "Skill",
+    "Task",
+    "TodoWrite",
+    "AskUserQuestion",
+    "WebFetch",
+    "WebSearch",
+    "NotebookEdit",
+    "Glob",
+    "Grep",
+]
+
+
 class Driver(ABC):
     """Abstract driver for running an AI coding agent."""
 
@@ -63,6 +80,19 @@ class Driver(ABC):
         HTTP hook server configured via .claude/settings.json).
         """
         ...
+
+    def query_for_evaluation(
+        self, prompt: str, *, model: str | None, env: dict[str, str]
+    ) -> AsyncIterator[Event]:
+        """Query once for a feedback evaluation with the evaluation tool restrictions."""
+        return self.query(
+            prompt,
+            model=model or "claude-sonnet-4-6",
+            max_turns=1,
+            allowed_tools=[],
+            disallowed_tools=[*PROBE_DISALLOWED_TOOLS, "NotebookRead", "Read"],
+            env=env,
+        )
 
     @abstractmethod
     async def stop(self) -> None:
