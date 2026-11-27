@@ -53,11 +53,12 @@ exit，断言聚焦在 `selected` 选对了哪个选项（`auq_must_select_one_o
 
 **基线（2026-06-29，HttpDriver 路径 / temp=0）：12 PASS / 0 FAIL，可复现（连跑两次一致）。**
 
-**待重跑（2026-11-25）**：本次改动新增 fixture 13（外部设备占用阻塞必需项 → 必须
-`block_with_feedback`），并把 STOP 判据收紧为「会话任务目标下的全部必需项已完成」、移除
-「外部阻塞 → let_exit」出口。13 项实模基线尚未在有实模凭据的环境重跑，需重点核对
-fixture 08 / 12 两个 let_exit 正向样例在收紧后仍放行；离线 prompt 断言已覆盖本次改动，
-`pytest tests/regression/reviewer --live` 结果待补录。
+**回放补录（2026-11-27，PR #114 实模）**：补上 2026-11-25 遗留的实模重跑（PR #113 收紧判据、
+新增 fixture 13、移除「外部阻塞 → let_exit」出口）。glm-5.2 与 deepseek-v4-pro 的所有 STOP
+用例均通过，含收紧后仍放行的 #08 / #12 正向样例；#14 连跑稳定性验证——glm-5.2 共 20 次、
+deepseek-v4-pro 共 5 次均稳定返回 `block_with_feedback`。全套 14 fixture：glm-5.2 13/14、
+deepseek-v4-pro 12/14，失败项均为 AUQ 变种（glm-5.2 #06；deepseek-v4-pro #06 / #07），
+与 STOP 判据改动无关。
 
 reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 循环、无 CC 框架），
 消除了 agent-loop 路径的 run-to-run 方差——`pytest tests/regression/reviewer --live` 现在
