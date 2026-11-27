@@ -1354,7 +1354,7 @@ class TestDeleteAffiliationReclaim:
         assert await orch.run_store.list_session_ids(run.run_id) == [session.id]
 
     async def test_delete_removes_roster_row_too(self, orch, tmp_path, monkeypatch):
-        """删除隐式会话和容器会话均清理名册。"""
+        """删除隐式会话和容器会话时清理会话记录。"""
         import sqlite3
 
         _fake_activate(orch, monkeypatch)
