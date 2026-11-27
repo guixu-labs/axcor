@@ -54,7 +54,6 @@ from workflow_controller.core.auth_rotator.persistence import (
     ProviderValidation,
     ValidationStatus,
 )
-from workflow_controller.driver.protocol import PROBE_DISALLOWED_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -2145,6 +2144,7 @@ class _ProbeSettings(NamedTuple):
 def _probe_settings(runtime: str, default_runtime: str) -> _ProbeSettings:
     """按 effective runtime 一次判定探测查询参数。"""
     from workflow_controller.driver.factory import resolve_runtime
+    from workflow_controller.driver.protocol import READ_ONLY_BASE_DISALLOWED_TOOLS
 
     codex_probe = resolve_runtime(runtime, default=default_runtime) == "codex_cli"
     if codex_probe:
@@ -2159,7 +2159,7 @@ def _probe_settings(runtime: str, default_runtime: str) -> _ProbeSettings:
         codex_probe=False,
         max_turns=1,
         allowed_tools=["Read"],
-        disallowed_tools=list(PROBE_DISALLOWED_TOOLS),
+        disallowed_tools=list(READ_ONLY_BASE_DISALLOWED_TOOLS),
         permission_mode="",
     )
 

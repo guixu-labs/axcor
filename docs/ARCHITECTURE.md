@@ -429,7 +429,7 @@ Driver (ABC)
   └── is_running: bool        # abstract property
 ```
 
-反馈评估通过 `Driver.query_for_evaluation()` 传入提示词、模型和 provider 环境。Driver 负责模型回退、轮数及工具权限。默认实现沿用单轮和工具禁用列表，Codex 使用 provider 模型和只读沙箱。
+反馈评估通过 `Driver.query_for_evaluation()` 传入提示词、模型和 provider 环境。Driver 负责模型回退、轮数及工具权限。基类默认实现沿用单轮和工具禁用列表且模型回退保持运行时中立（各驱动自带 `evaluation_default_model`：Claude 驱动沿用 `claude-sonnet-4-6`，opencode 走其配置默认）；Codex 使用 provider 模型和只读沙箱。
 
 四个实现：
 

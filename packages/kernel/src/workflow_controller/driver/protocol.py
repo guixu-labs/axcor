@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from workflow_controller.session.events import Event
 
 
-# 禁用列表供 worker 探测和反馈评估共用。
-PROBE_DISALLOWED_TOOLS = [
+# 只读评估/探测禁用的工具基表：驱动默认评估查询与 auth 探测共用。
+READ_ONLY_BASE_DISALLOWED_TOOLS = [
     "Bash",
     "Write",
     "Edit",
@@ -45,6 +45,10 @@ PROBE_DISALLOWED_TOOLS = [
 
 class Driver(ABC):
     """Abstract driver for running an AI coding agent."""
+
+    #: 反馈评估的默认模型；基类保持运行时中立（空串交各驱动自决），
+    #: Claude 驱动覆写为各自默认模型，opencode 走其配置默认。
+    evaluation_default_model: str = ""
 
     def __init__(self, *, permission_mode: str = "bypassPermissions") -> None:
         self._permission_mode = permission_mode
@@ -84,13 +88,17 @@ class Driver(ABC):
     def query_for_evaluation(
         self, prompt: str, *, model: str | None, env: dict[str, str]
     ) -> AsyncIterator[Event]:
-        """Query once for a feedback evaluation with the evaluation tool restrictions."""
+        """Query once for a feedback evaluation with the evaluation tool restrictions.
+
+        模型缺省时回退到各驱动自带的 ``evaluation_default_model``，
+        基类不声明 Claude 专属默认。
+        """
         return self.query(
             prompt,
-            model=model or "claude-sonnet-4-6",
+            model=model or self.evaluation_default_model,
             max_turns=1,
             allowed_tools=[],
-            disallowed_tools=[*PROBE_DISALLOWED_TOOLS, "NotebookRead", "Read"],
+            disallowed_tools=[*READ_ONLY_BASE_DISALLOWED_TOOLS, "NotebookRead", "Read"],
             env=env,
         )
 

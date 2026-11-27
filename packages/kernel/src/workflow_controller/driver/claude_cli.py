@@ -70,6 +70,8 @@ class ClaudeCLIExitError(RuntimeError):
 class ClaudeCLIDriver(CLIDriverBase):
     """Runs Claude via the `claude` CLI binary (subprocess)."""
 
+    evaluation_default_model = "claude-sonnet-4-6"
+
     def __init__(
         self,
         *,

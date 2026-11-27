@@ -91,6 +91,8 @@ def _make_transport(prompt: str, options: Any) -> Any:
 class ClaudeSDKDriver(CLIDriverBase):
     """Runs Claude via the claude-agent-sdk library (in-process, no subprocess)."""
 
+    evaluation_default_model = "claude-sonnet-4-6"
+
     def __init__(
         self,
         *,
