@@ -217,6 +217,7 @@ def _build_reviewer_runtime_config(
         timeout_seconds=config.timeout_seconds,
         thinking_mode=config.thinking_mode,
         thinking_budget_tokens=config.thinking_budget_tokens,
+        max_tokens=config.max_tokens,
         task_goal=config.task_goal,
     )
 

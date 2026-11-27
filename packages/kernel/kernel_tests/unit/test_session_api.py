@@ -458,27 +458,34 @@ def test_start_reviewer_enabled_override_is_session_local(tmp_path):
 
 def test_start_freezes_resolved_reviewer_thinking(tmp_path):
     (tmp_path / "workflow-controller.yaml").write_text(
-        "reviewer: {thinking_mode: disabled, thinking_budget_tokens: 3072}\n",
+        "reviewer: {thinking_mode: disabled, thinking_budget_tokens: 3072, max_tokens: 4096}\n",
         encoding="utf-8",
     )
     global_cfg = AppConfig(project_dir=str(tmp_path))
     global_cfg.reviewer.thinking_mode = "enabled"
+    global_cfg.reviewer.max_tokens = 8192
     orch = _orch_with_config(global_cfg)
     api = SessionAPI(orch, None)
     asyncio.run(api.start(str(tmp_path)))
     reviewer = orch.start_session_with_config.call_args.args[0].reviewer
     assert reviewer.thinking_mode == "disabled"
     assert reviewer.thinking_budget_tokens == 3072
+    assert reviewer.max_tokens == 4096
 
     asyncio.run(
         api.start(
             str(tmp_path),
-            reviewer=ReviewerStartOverrides(thinking_mode="enabled", thinking_budget_tokens=8192),
+            reviewer=ReviewerStartOverrides(
+                thinking_mode="enabled",
+                thinking_budget_tokens=8192,
+                max_tokens=16384,
+            ),
         )
     )
     reviewer = orch.start_session_with_config.call_args.args[0].reviewer
     assert reviewer.thinking_mode == "enabled"
     assert reviewer.thinking_budget_tokens == 8192
+    assert reviewer.max_tokens == 16384
 
 
 def test_start_rejects_unknown_cli_wrapper_before_session_creation(tmp_path):

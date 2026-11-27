@@ -335,6 +335,10 @@ class GraphPlugin(Plugin):
         )
         opts["reviewer_thinking_enabled"] = thinking_enabled
         opts["reviewer_thinking_budget_tokens"] = thinking_budget
+        opts["reviewer_max_tokens"] = self._ctx.services.reviewer_max_tokens(
+            work_dir,
+            opts.get("reviewer_max_tokens"),
+        )
 
     def _build_driver(
         self,

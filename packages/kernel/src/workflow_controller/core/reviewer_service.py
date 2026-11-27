@@ -63,6 +63,7 @@ class ReviewerRuntimeConfig:
     model: str
     timeout_seconds: float
     thinking_budget_tokens: int = 2048
+    max_tokens: int = 1024
     task_goal: str = ""
     thinking_mode: str = "disabled"
 
@@ -282,5 +283,6 @@ class ReviewerService:
             model=self._config.model,
             timeout_seconds=self._config.timeout_seconds,
             thinking_budget_tokens=self._config.thinking_budget_tokens,
+            max_tokens=self._config.max_tokens,
             thinking_mode=self._config.thinking_mode,
         )

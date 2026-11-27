@@ -1392,6 +1392,7 @@ class Orchestrator:
                 timeout_seconds=rc.timeout_seconds,
                 thinking_mode=rc.thinking_mode,
                 thinking_budget_tokens=rc.thinking_budget_tokens,
+                max_tokens=rc.max_tokens,
                 task_goal=str((session.config.criteria or {}).get("task_goal") or rc.task_goal),
             )
             changed = True

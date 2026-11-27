@@ -159,6 +159,7 @@ _REVIEWER_OVERRIDE_KEYS = (
     "reviewer_provider_index",
     "reviewer_thinking_enabled",
     "reviewer_thinking_budget_tokens",
+    "reviewer_max_tokens",
 )
 
 
@@ -184,6 +185,11 @@ def _apply_reviewer_overrides(base_config: SessionConfig, ov: dict[str, Any]) ->
     if (budget := ov.get("reviewer_thinking_budget_tokens")) is not None:
         with contextlib.suppress(TypeError, ValueError):
             base_config.reviewer.thinking_budget_tokens = max(1024, int(budget))
+    if (max_tokens := ov.get("reviewer_max_tokens")) is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            from workflow_controller.config.settings import MIN_REVIEWER_MAX_TOKENS
+
+            base_config.reviewer.max_tokens = max(MIN_REVIEWER_MAX_TOKENS, int(max_tokens))
 
 
 def _apply_max_iterations_override(base_config: SessionConfig, ov: dict[str, Any]) -> bool:

@@ -1972,6 +1972,7 @@ class TestFinishAndSnapshot:
                 "reviewer_enabled": True,
                 "reviewer_thinking_enabled": legacy_enabled,
                 "reviewer_thinking_budget_tokens": 4096,
+                "reviewer_max_tokens": 8192,
             }
         )
         action = first(decide(driver), StartSession)
@@ -1979,6 +1980,20 @@ class TestFinishAndSnapshot:
         assert profile["thinking_enabled"] is legacy_enabled
         assert SessionReviewerConfig(**profile).thinking_mode == expected_mode
         assert profile["thinking_budget_tokens"] == 4096
+        assert profile["max_tokens"] == 8192
+
+    @staticmethod
+    def test_low_reviewer_max_tokens_enters_member_profile(tmp_path):
+        driver = build_driver(tmp_path, [agent_node("a", acceptance={"enabled": False})])
+        driver.apply_runtime_config(
+            {
+                "reviewer_enabled": True,
+                "reviewer_max_tokens": 512,
+            }
+        )
+        action = first(decide(driver), StartSession)
+        profile = json.loads(action.spec.reviewer_profile)
+        assert SessionReviewerConfig(**profile).max_tokens == 512
 
     @staticmethod
     def test_update_model_without_model_pinned_keeps_pin(tmp_path):

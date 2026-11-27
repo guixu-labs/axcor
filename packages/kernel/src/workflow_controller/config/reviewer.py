@@ -23,17 +23,21 @@ import yaml
 if TYPE_CHECKING:
     from workflow_controller.config.settings import ReviewerConfig, ThinkingMode
 
+from workflow_controller.config.settings import MIN_REVIEWER_MAX_TOKENS
+
 
 @dataclass(frozen=True)
 class ReviewerThinkingOverride:
     mode: ThinkingMode | None = None
     budget_tokens: int | None = None
+    max_tokens: int | None = None
 
 
 @dataclass(frozen=True)
 class ReviewerThinkingValues:
     mode: ThinkingMode = "disabled"
     budget_tokens: int = 2048
+    max_tokens: int = MIN_REVIEWER_MAX_TOKENS
 
 
 def explicit_project_reviewer_thinking(
@@ -54,10 +58,15 @@ def explicit_project_reviewer_thinking(
 
     mode = reviewer.get("thinking_mode")
     budget = reviewer.get("thinking_budget_tokens")
+    max_tokens = reviewer.get("max_tokens")
     try:
         budget_tokens = int(budget) if budget is not None else None
     except (TypeError, ValueError):
         budget_tokens = None
+    try:
+        resolved_max_tokens = int(max_tokens) if max_tokens is not None else None
+    except (TypeError, ValueError):
+        resolved_max_tokens = None
     resolved_mode: ThinkingMode | None = (
         mode
         if mode
@@ -76,6 +85,7 @@ def explicit_project_reviewer_thinking(
     return ReviewerThinkingOverride(
         mode=resolved_mode,
         budget_tokens=budget_tokens,
+        max_tokens=resolved_max_tokens,
     )
 
 
@@ -84,6 +94,7 @@ def resolve_reviewer_thinking(
     global_reviewer: ReviewerConfig,
     *,
     budget_override: int | None = None,
+    max_tokens_override: int | None = None,
     mode_override: ThinkingMode | str | None = None,
 ) -> ReviewerThinkingValues:
     project = explicit_project_reviewer_thinking(project_dir)
@@ -95,6 +106,17 @@ def resolve_reviewer_thinking(
     except (TypeError, ValueError):
         budget = 2048
 
+    resolved_max_tokens = (
+        max_tokens_override if max_tokens_override is not None else project.max_tokens
+    )
+    if resolved_max_tokens is None:
+        resolved_max_tokens = global_reviewer.max_tokens
+    try:
+        resolved_max_tokens = int(resolved_max_tokens)
+    except (TypeError, ValueError):
+        resolved_max_tokens = MIN_REVIEWER_MAX_TOKENS
+    resolved_max_tokens = max(MIN_REVIEWER_MAX_TOKENS, resolved_max_tokens)
+
     mode: ThinkingMode
     if mode_override in ("disabled", "enabled", "adaptive", "omitted"):
         mode = mode_override
@@ -104,4 +126,8 @@ def resolve_reviewer_thinking(
         mode = global_reviewer.thinking_mode
     else:
         mode = "disabled"
-    return ReviewerThinkingValues(mode=mode, budget_tokens=budget)
+    return ReviewerThinkingValues(
+        mode=mode,
+        budget_tokens=budget,
+        max_tokens=resolved_max_tokens,
+    )

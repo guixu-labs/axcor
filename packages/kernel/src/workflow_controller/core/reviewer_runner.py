@@ -20,6 +20,8 @@ import os
 import re
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
+from workflow_controller.config.settings import MIN_REVIEWER_MAX_TOKENS
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
@@ -36,6 +38,7 @@ class _ReviewRequest(NamedTuple):
     model: str
     timeout_seconds: float
     thinking_budget_tokens: int
+    max_tokens: int
     thinking_mode: str
 
 
@@ -48,6 +51,7 @@ class ReviewerRunner(Protocol):
         timeout_seconds: float,
         *,
         thinking_budget_tokens: int = 2048,
+        max_tokens: int = MIN_REVIEWER_MAX_TOKENS,
         thinking_mode: str = "disabled",
     ) -> str:
         request = _ReviewRequest(
@@ -56,6 +60,7 @@ class ReviewerRunner(Protocol):
             model,
             timeout_seconds,
             thinking_budget_tokens,
+            max_tokens,
             thinking_mode,
         )
         return await self._run(request)
@@ -154,6 +159,7 @@ class DriverReviewerRunner(ReviewerRunner):
             model=call_model,
             env=sdk_env,
             thinking_budget_tokens=request.thinking_budget_tokens,
+            max_tokens=max(MIN_REVIEWER_MAX_TOKENS, request.max_tokens),
             thinking_type=thinking_type,
         )
         if result.is_error:
@@ -229,6 +235,7 @@ class FakeReviewerRunner(ReviewerRunner):
         self.thinking_calls.append(
             {
                 "thinking_budget_tokens": request.thinking_budget_tokens,
+                "max_tokens": request.max_tokens,
                 "thinking_mode": request.thinking_mode,
             }
         )

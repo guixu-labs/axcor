@@ -37,7 +37,12 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from workflow_controller.config.reviewer import explicit_project_reviewer_thinking
-from workflow_controller.config.settings import DEFAULT_BRAND_NAME, AppConfig, WatchdogConfig
+from workflow_controller.config.settings import (
+    DEFAULT_BRAND_NAME,
+    MIN_REVIEWER_MAX_TOKENS,
+    AppConfig,
+    WatchdogConfig,
+)
 
 if TYPE_CHECKING:
     from workflow_controller.core.orchestrator import Orchestrator
@@ -179,6 +184,15 @@ def _merge_project_yaml_data(data: dict[str, Any], partial: dict[str, Any]) -> N
                 touched = True
             except (TypeError, ValueError):
                 pass
+        if "max_tokens" in partial["reviewer"]:
+            raw_max_tokens = partial["reviewer"]["max_tokens"]
+            if raw_max_tokens is not None:
+                try:
+                    max_tokens = int(raw_max_tokens)
+                except (TypeError, ValueError):
+                    raise ValueError("reviewer.max_tokens must be an integer") from None
+                rv["max_tokens"] = max(MIN_REVIEWER_MAX_TOKENS, max_tokens)
+                touched = True
         if touched:
             data["reviewer"] = rv
 
@@ -226,6 +240,9 @@ def _apply_reviewer_fields(cfg: AppConfig, partial: dict[str, Any]) -> None:
     if "thinking_budget_tokens" in rv:
         with contextlib.suppress(TypeError, ValueError):
             cfg.reviewer.thinking_budget_tokens = max(1024, int(rv["thinking_budget_tokens"]))
+    if "max_tokens" in rv:
+        with contextlib.suppress(TypeError, ValueError):
+            cfg.reviewer.max_tokens = max(MIN_REVIEWER_MAX_TOKENS, int(rv["max_tokens"]))
 
 
 def _apply_watchdog_key(cfg: AppConfig, wd: dict[str, Any], key: str) -> None:
@@ -374,6 +391,7 @@ class ConfigAPI:
                 "timeout_seconds": cfg.reviewer.timeout_seconds,
                 "thinking_mode": cfg.reviewer.thinking_mode,
                 "thinking_budget_tokens": cfg.reviewer.thinking_budget_tokens,
+                "max_tokens": cfg.reviewer.max_tokens,
                 "mode": self._orch.reviewer_mode,
             },
             "sessions": [
@@ -492,6 +510,7 @@ class ConfigAPI:
                 "model": cfg.reviewer.model,
                 "thinking_mode": explicit_thinking.mode,
                 "thinking_budget_tokens": explicit_thinking.budget_tokens,
+                "max_tokens": explicit_thinking.max_tokens,
                 "task_goal": cfg.reviewer.task_goal,
             },
             "graph_yaml": graph_yaml,

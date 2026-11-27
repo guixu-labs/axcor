@@ -25,10 +25,18 @@ def test_missing_project_fields_inherit_global(tmp_path):
     (tmp_path / "workflow-controller.yaml").write_text(
         "reviewer: {model: test}\n", encoding="utf-8"
     )
-    global_config = ReviewerConfig(thinking_mode="enabled", thinking_budget_tokens=4096)
+    global_config = ReviewerConfig(
+        thinking_mode="enabled",
+        thinking_budget_tokens=4096,
+        max_tokens=8192,
+    )
     assert explicit_project_reviewer_thinking(tmp_path).mode is None
     resolved = resolve_reviewer_thinking(tmp_path, global_config)
-    assert (resolved.mode, resolved.budget_tokens) == ("enabled", 4096)
+    assert (resolved.mode, resolved.budget_tokens, resolved.max_tokens) == (
+        "enabled",
+        4096,
+        8192,
+    )
 
 
 @pytest.mark.parametrize(
@@ -63,16 +71,45 @@ def test_request_overrides_project_and_explicit_false(tmp_path):
         "reviewer: {thinking_mode: disabled, thinking_budget_tokens: 3072}\n",
         encoding="utf-8",
     )
-    global_config = ReviewerConfig(thinking_mode="enabled", thinking_budget_tokens=4096)
+    global_config = ReviewerConfig(
+        thinking_mode="enabled",
+        thinking_budget_tokens=4096,
+        max_tokens=8192,
+    )
     project = resolve_reviewer_thinking(tmp_path, global_config)
-    assert (project.mode, project.budget_tokens) == ("disabled", 3072)
+    assert (project.mode, project.budget_tokens, project.max_tokens) == (
+        "disabled",
+        3072,
+        8192,
+    )
     request = resolve_reviewer_thinking(
         tmp_path,
         global_config,
         mode_override="enabled",
         budget_override=8192,
+        max_tokens_override=16384,
     )
-    assert (request.mode, request.budget_tokens) == ("enabled", 8192)
+    assert (request.mode, request.budget_tokens, request.max_tokens) == (
+        "enabled",
+        8192,
+        16384,
+    )
+
+
+def test_max_tokens_out_of_range_is_clamped(tmp_path):
+    resolved = resolve_reviewer_thinking(
+        tmp_path,
+        ReviewerConfig(),
+        max_tokens_override=512,
+    )
+    assert resolved.max_tokens == 2048
+
+
+def test_low_max_tokens_is_loaded_and_clamped_at_resolution(tmp_path):
+    global_reviewer = ReviewerConfig(max_tokens=512)
+    assert global_reviewer.max_tokens == 512
+    assert SessionReviewerConfig(max_tokens=512).max_tokens == 512
+    assert resolve_reviewer_thinking(tmp_path, global_reviewer).max_tokens == 2048
 
 
 def test_string_overrides_are_not_coerced_as_truthy(tmp_path):

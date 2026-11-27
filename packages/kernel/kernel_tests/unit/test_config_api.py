@@ -118,19 +118,57 @@ def test_reviewer_thinking_config_api_keeps_inheritance_and_other_keys(tmp_path)
     yaml_path.write_text("reviewer: {model: old}\nstages: [{name: a}]\n", encoding="utf-8")
     api = ConfigAPI(_orch(AppConfig(project_dir=str(tmp_path))), tmp_path / "saved.yaml")
     assert api.get_project_config(str(tmp_path))["reviewer"]["thinking_mode"] is None
-    api.update_config({"reviewer": {"thinking_mode": "enabled", "thinking_budget_tokens": 4096}})
+    api.update_config(
+        {
+            "reviewer": {
+                "thinking_mode": "enabled",
+                "thinking_budget_tokens": 4096,
+                "max_tokens": 8192,
+            }
+        }
+    )
     assert api.get_config_dict()["reviewer"]["thinking_budget_tokens"] == 4096
+    assert api.get_config_dict()["reviewer"]["max_tokens"] == 8192
     result = api.update_project_config(
         str(tmp_path),
         {
-            "reviewer": {"thinking_mode": "disabled", "thinking_budget_tokens": 3072},
+            "reviewer": {
+                "thinking_mode": "disabled",
+                "thinking_budget_tokens": 3072,
+                "max_tokens": 4096,
+            },
         },
     )
     assert result["reviewer"]["thinking_mode"] == "disabled"
     assert result["reviewer"]["thinking_budget_tokens"] == 3072
+    assert result["reviewer"]["max_tokens"] == 4096
     saved = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     assert saved["reviewer"]["model"] == "old"
     assert saved["stages"] == [{"name": "a"}]
+
+
+def test_project_reviewer_max_tokens_rejects_non_integer(tmp_path):
+    """项目 max_tokens 非整数时显式失败，避免保存假成功。"""
+    api = ConfigAPI(_orch(AppConfig(project_dir=str(tmp_path))), tmp_path / "saved.yaml")
+
+    with pytest.raises(ValueError, match=r"reviewer\.max_tokens must be an integer"):
+        api.update_project_config(
+            str(tmp_path),
+            {"reviewer": {"max_tokens": "4096 tokens"}},
+        )
+
+
+def test_project_reviewer_null_max_tokens_means_unconfigured(tmp_path):
+    """项目 max_tokens=null 表示未配置，回写不应保存失败。"""
+    api = ConfigAPI(_orch(AppConfig(project_dir=str(tmp_path))), tmp_path / "saved.yaml")
+    project = api.get_project_config(str(tmp_path))
+
+    result = api.update_project_config(
+        str(tmp_path),
+        {"reviewer": project["reviewer"]},
+    )
+
+    assert result["reviewer"]["max_tokens"] is None
 
 
 def test_reviewer_thinking_legacy_false_maps_to_disabled(tmp_path):

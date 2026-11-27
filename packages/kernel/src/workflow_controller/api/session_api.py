@@ -60,6 +60,7 @@ class ReviewerStartOverrides:
     enabled: bool | None = None
     thinking_mode: str | None = None
     thinking_budget_tokens: int | None = None
+    max_tokens: int | None = None
 
 
 if TYPE_CHECKING:
@@ -1197,6 +1198,7 @@ class SessionAPI:
             provider_index=reviewer_provider_index,
             timeout_seconds=reviewer_config.timeout_seconds,
             thinking_budget_tokens=reviewer_config.thinking_budget_tokens,
+            max_tokens=reviewer_config.max_tokens,
             thinking_mode=reviewer_config.thinking_mode,
             task_goal=reviewer_config.task_goal,
         )
@@ -1225,6 +1227,7 @@ class SessionAPI:
             project_dir,
             self._orch.config.reviewer,
             budget_override=reviewer.thinking_budget_tokens,
+            max_tokens_override=reviewer.max_tokens,
             mode_override=reviewer.thinking_mode,
         )
         reviewer_mode = getattr(self._orch, "reviewer_mode", "auto")
@@ -1242,6 +1245,7 @@ class SessionAPI:
             timeout_seconds=src.reviewer.timeout_seconds,
             thinking_mode=thinking.mode,
             thinking_budget_tokens=thinking.budget_tokens,
+            max_tokens=thinking.max_tokens,
             task_goal=task_goal,
         )
 

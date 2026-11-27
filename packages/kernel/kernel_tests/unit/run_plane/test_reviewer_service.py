@@ -73,10 +73,12 @@ class TestDecideStop:
     ) -> None:
         getattr(service, "_config").thinking_mode = "enabled"
         getattr(service, "_config").thinking_budget_tokens = 4096
+        getattr(service, "_config").max_tokens = 8192
         runner.responses["done"] = '{"action":"let_exit","feedback":"","rationale":"ok"}'
         await service.decide_stop("done")
         assert runner.thinking_calls[-1] == {
             "thinking_budget_tokens": 4096,
+            "max_tokens": 8192,
             "thinking_mode": "enabled",
         }
 

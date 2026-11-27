@@ -317,12 +317,14 @@ async def test_traceback_route_passes_reviewer_thinking_overrides(stub_orch_with
                 "overrides": {
                     "reviewer_thinking_enabled": False,
                     "reviewer_thinking_budget_tokens": 4096,
+                    "reviewer_max_tokens": 8192,
                 },
             },
         )
     assert plugin.traceback_calls[0]["overrides"] == {
         "reviewer_thinking_enabled": False,
         "reviewer_thinking_budget_tokens": 4096,
+        "reviewer_max_tokens": 8192,
     }
 
 

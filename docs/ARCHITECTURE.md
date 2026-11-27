@@ -722,7 +722,7 @@ Orchestrator processes decision → returns JSON response to Claude Code
 
 ## Auth 系统
 
-Reviewer thinking mode 采用请求值、项目 `workflow-controller.yaml`、全局配置三级优先级；未配置的字段以 `None` 表示并继续向下回退，显式 `False` 不被覆盖。会话创建时将解析值写入 `SessionReviewerConfig`，ReviewerService 传给 DriverReviewerRunner；Codex Worker 的 Reviewer 同样必须使用 Anthropic Messages base URL。Provider 测试完整探测 `disabled`、带预算的 `enabled`、`adaptive`、省略字段四种形状并持久化成功集合；新建会话只允许选择当前 Provider 支持的模式，`enabled` 模式使用 thinking 预算，其余模式不使用预算字段。`max_tokens` 保持既有调用语义，`enabled` 仍按 thinking 预算额外预留 1024 token 给判定文本。全部失败时只保留最终归一化诊断，不透传多次 fallback 的上游原始错误。共享 Anthropic HTTP client 只把非 Anthropic Messages 形状视为请求错误；健康检查允许形状合法但无 text 的 always-thinking 响应，Reviewer runner 与 Provider Reviewer 探测另行要求非空文本。全局和项目配置 API 暴露这两个字段，项目读取保留未配置的 `null` 语义。
+Reviewer thinking mode 和 `max_tokens` 采用请求值、项目 `workflow-controller.yaml`、全局配置三级优先级；未配置的字段以 `None` 表示并继续向下回退，显式 `False` 不被覆盖。会话创建时将解析值写入 `SessionReviewerConfig`，ReviewerService 传给 DriverReviewerRunner；Codex Worker 的 Reviewer 同样必须使用 Anthropic Messages base URL。Provider 测试完整探测 `disabled`、带预算的 `enabled`、`adaptive`、省略字段四种形状并持久化成功集合；新建会话只允许选择当前 Provider 支持的模式，`enabled` 模式使用 thinking 预算，其余模式不使用预算字段。`max_tokens` 仅约束 Reviewer 判定文本，默认 2048、最小 2048；配置模型保留历史/热切换低值以免加载崩溃，解析与 HTTP 调用边界统一钳制到 2048，`enabled` 仍按 thinking 预算额外预留 1024 token 给判定文本。全部失败时只保留最终归一化诊断，不透传多次 fallback 的上游原始错误。共享 Anthropic HTTP client 只把非 Anthropic Messages 形状视为请求错误；健康检查允许形状合法但无 text 的 always-thinking 响应，Reviewer runner 与 Provider Reviewer 探测另行要求非空文本。全局和项目配置 API 暴露这三个字段，项目读取保留未配置的 `null` 语义。
 
 ### Auth Rotator
 

@@ -148,10 +148,33 @@ async def test_runner_passes_thinking_mode_to_http(
         1,
         thinking_mode="enabled",
         thinking_budget_tokens=4096,
+        max_tokens=8192,
     )
     assert captured["thinking_type"] == "enabled"
     assert captured["thinking_budget_tokens"] == 4096
+    assert captured["max_tokens"] == 8192
     assert "temperature" not in captured
+
+
+@pytest.mark.asyncio
+async def test_runner_clamps_low_max_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured = {}
+
+    async def request(self, prompt, **kwargs):
+        captured.update(kwargs)
+        return HttpResult(text='{"action":"let_exit"}', is_error=False, error="")
+
+    monkeypatch.setattr(AnthropicHttpClient, "request", request)
+    await DriverReviewerRunner().run(
+        "review",
+        tmp_path,
+        "model",
+        1,
+        max_tokens=512,
+    )
+    assert captured["max_tokens"] == 2048
 
 
 @pytest.mark.asyncio

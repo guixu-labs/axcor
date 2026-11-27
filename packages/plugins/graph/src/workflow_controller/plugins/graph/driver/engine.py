@@ -100,6 +100,7 @@ RUNNER_OPTION_KEYS = (
     "max_iterations",
     "reviewer_thinking_enabled",
     "reviewer_thinking_budget_tokens",
+    "reviewer_max_tokens",
     "system_prompt",
     "reviewer_task_goal",
     "provider_index",
@@ -610,6 +611,7 @@ class GraphDriver:
             "reviewer_provider_index": self._reviewer_provider_index,
             "reviewer_thinking_enabled": self._reviewer_thinking_enabled,
             "reviewer_thinking_budget_tokens": self._reviewer_thinking_budget_tokens,
+            "reviewer_max_tokens": self._reviewer_max_tokens,
             "evaluator": self._evaluator,
             "max_iterations": self._max_iterations,
             "system_prompt": self._system_prompt,
@@ -635,6 +637,7 @@ class GraphDriver:
         self._reviewer_provider_index = opts.get("reviewer_provider_index")
         self._reviewer_thinking_enabled = opts.get("reviewer_thinking_enabled")
         self._reviewer_thinking_budget_tokens = opts.get("reviewer_thinking_budget_tokens")
+        self._reviewer_max_tokens = opts.get("reviewer_max_tokens")
         self._evaluator = opts.get("evaluator")
         self._max_iterations = opts.get("max_iterations")
         self._system_prompt = opts.get("system_prompt")
@@ -2017,6 +2020,8 @@ class GraphDriver:
             payload["thinking_enabled"] = self._reviewer_thinking_enabled
         if self._reviewer_thinking_budget_tokens is not None:
             payload["thinking_budget_tokens"] = self._reviewer_thinking_budget_tokens
+        if self._reviewer_max_tokens is not None:
+            payload["max_tokens"] = self._reviewer_max_tokens
         return json.dumps(payload)
 
     def _report_command(self, act: NodeActivity, node: dict, ctx: dict) -> str:

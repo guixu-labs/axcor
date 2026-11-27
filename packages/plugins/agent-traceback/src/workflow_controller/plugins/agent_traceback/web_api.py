@@ -120,6 +120,7 @@ _TRACEBACK_OVERRIDE_KEYS = (
     "reviewer_enabled",
     "reviewer_thinking_enabled",
     "reviewer_thinking_budget_tokens",
+    "reviewer_max_tokens",
     "system_prompt",
     "evaluator",
     "max_iterations",

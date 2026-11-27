@@ -1388,6 +1388,7 @@ class TestConfigReplayOverrides:
                 "reviewer_enabled": True,
                 "reviewer_thinking_enabled": legacy_enabled,
                 "reviewer_thinking_budget_tokens": 4096,
+                "reviewer_max_tokens": 8192,
             },
         )
         assert result["ok"] is True
@@ -1396,6 +1397,7 @@ class TestConfigReplayOverrides:
         assert reviewer.thinking_mode == expected_mode
         assert reviewer.thinking_enabled is legacy_enabled
         assert reviewer.thinking_budget_tokens == 4096
+        assert reviewer.max_tokens == 8192
 
     async def test_overrides_reviewer_thinking_without_enabled_creates_config(
         self,

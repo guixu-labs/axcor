@@ -32,6 +32,7 @@ class HookConfig(BaseModel):
 
 
 ThinkingMode = Literal["disabled", "enabled", "adaptive", "omitted"]
+MIN_REVIEWER_MAX_TOKENS = 2048
 
 
 def _migrate_thinking_enabled(data: Any) -> Any:
@@ -78,6 +79,7 @@ class SessionReviewerConfig(BaseModel):
     timeout_seconds: float = 300.0
     thinking_mode: ThinkingMode = "disabled"
     thinking_budget_tokens: int = 2048
+    max_tokens: int = MIN_REVIEWER_MAX_TOKENS
     task_goal: str = DEFAULT_TASK_GOAL
 
     # 删除：旧插件/外部调用方仍可能使用旧布尔字段；全部迁移到 thinking_mode 后删除。
@@ -162,6 +164,7 @@ class ReviewerConfig(BaseModel):
     timeout_seconds: float = 300.0
     thinking_mode: ThinkingMode = "disabled"
     thinking_budget_tokens: int = 2048
+    max_tokens: int = MIN_REVIEWER_MAX_TOKENS
     # Default to the project-wide DEFAULT_TASK_GOAL so reviewer is never
     # initialised with an empty grounding section, even if the yaml is
     # missing the `reviewer:` block entirely (e.g. created by Save Path

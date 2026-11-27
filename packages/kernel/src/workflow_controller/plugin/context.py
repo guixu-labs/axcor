@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from workflow_controller.config.settings import MIN_REVIEWER_MAX_TOKENS
 from workflow_controller.event.type_registry import EventTypeDef, EventTypeRegistry
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ class PluginServices:
     reviewer_thinking_resolver: (
         Callable[[str, bool | None, int | None], tuple[bool, int]] | None
     ) = None
+    reviewer_max_tokens_resolver: Callable[[str, int | None], int] | None = None
     # 跨 session 流程编排端口：插件（如 breather 交接）需要操作宿主里的其他
     # session——启停、等结束、名册落盘、查在途 subagent。这些能力住在
     # orchestrator，插件不得直访其私有成员，一律经此端口委托；调用走下方
@@ -122,6 +124,16 @@ class PluginServices:
                 budget if budget is not None else 2048,
             )
         return self.reviewer_thinking_resolver(project_dir, enabled, budget)
+
+    def reviewer_max_tokens(self, project_dir: str, max_tokens: int | None) -> int:
+        """Resolve reviewer output token limit with project/global fallbacks."""
+        if self.reviewer_max_tokens_resolver is None:
+            return (
+                max(MIN_REVIEWER_MAX_TOKENS, max_tokens)
+                if max_tokens is not None
+                else MIN_REVIEWER_MAX_TOKENS
+            )
+        return self.reviewer_max_tokens_resolver(project_dir, max_tokens)
 
     def resolve_runtime(self, runtime: str | None) -> str:
         if self.runtime_resolver is None:

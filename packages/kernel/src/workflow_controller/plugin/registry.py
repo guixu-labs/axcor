@@ -117,12 +117,23 @@ def _driver_factories(orchestrator: Any) -> dict[str, Any]:
         )
         return (values.mode == "enabled", values.budget_tokens)
 
+    def reviewer_max_tokens(project_dir: str, max_tokens: int | None) -> int:
+        """Resolve graph reviewer max tokens from project and global settings."""
+        from workflow_controller.config.reviewer import resolve_reviewer_thinking
+
+        return resolve_reviewer_thinking(
+            project_dir,
+            orchestrator.config.reviewer,
+            max_tokens_override=max_tokens,
+        ).max_tokens
+
     return {
         "create_driver": create_driver,
         "runtime_resolver": resolve_runtime,
         "find_plugin": find_plugin,
         "get_provider_model": get_provider_model,
         "reviewer_thinking_resolver": reviewer_thinking,
+        "reviewer_max_tokens_resolver": reviewer_max_tokens,
     }
 
 
