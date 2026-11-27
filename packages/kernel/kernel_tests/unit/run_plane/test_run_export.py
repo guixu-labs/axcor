@@ -253,6 +253,20 @@ async def test_validator_accepts_minimal_bundle(tmp_path: Path) -> None:
     validate_bundle(bundle)
 
 
+@pytest.mark.parametrize(
+    "status",
+    ["passed", "failed", "running", "stopped"],
+)
+def test_validator_accepts_reviewer_verification_statuses(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    """graph 导出的 reviewer/verifier 验收状态均符合权威 schema。"""
+    doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    doc["data"]["members"][1]["verification"] = {"type": "agent", "status": status}
+    validate_bundle(_write_fixture_bundle(tmp_path, doc))
+
+
 def test_validator_accepts_omitted_workflow_collections(tmp_path: Path) -> None:
     base = {
         "schema": "workflow-bundle",

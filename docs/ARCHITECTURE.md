@@ -291,7 +291,7 @@ class RunRecord:
   opencode 经 `workflow_controller.transcript` 转换轨（读取面 v1/v2 双轨：按会话落表探测
   `session_v2`/`session_message`，miss 回落旧三表，多 runtime 演进见设计稿 §16）；
   产物落 run 根 `export/{run_id}-bundle/`，任意非
-  pending 状态可导（时点快照），隐式 run 拒绝；贡献者超时/异常与 zip 写入失败映射
+  pending 状态可导（时点快照），隐式 run 拒绝；`workflow.json` 的 `verification.status` 支持 `stopped`，用于 graph 导出中被停止的 reviewer/verifier 成员；该值是对既有三态的兼容扩展，旧包与既有 worker 导出仍合法。贡献者超时/异常与 zip 写入失败映射
   503，不落 run 任何状态）。路由经 CoreAPI 新增的 RunAPI
   子 API 操作，不直摸 orchestrator（依赖门禁）。
 - **与 Graph Runner 的关系**：graph 插件的 `graph_id` 维持插件级身份不动；runs 是宿主级
