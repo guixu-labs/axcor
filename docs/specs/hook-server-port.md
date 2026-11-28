@@ -62,9 +62,10 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 1. Claude CLI session 激活前刷新 `.claude/settings.json`。
 2. 刷新时使用 `effective_hook_port`。
 3. Hook Server 不可用时拒绝激活，避免旧 session 访问漂移端口。
-4. 刷新按事件合并，不整段覆盖 `hooks`：只替换 controller 自己的条目（`type` 为 `http` 且 URL
-   路径为 `/hooks/<event>` 端点之一的 matcher 条目，含端口过期的旧条目），保留项目原有的
-   其他 hook 条目与事件；`hooks` 以外的顶层键照旧保留。
+4. 刷新按事件合并，不整段覆盖 `hooks`：只替换 controller 自己的条目（`type` 为 `http`、协议为
+   `http`、主机为配置的 hook server 主机或回环别名，且 URL 路径为 `/hooks/<event>` 端点之一
+   的 matcher 条目；端口不参与判断，过期端口的旧条目照常替换），保留项目原有的其他 hook
+   条目与事件；`hooks` 以外的顶层键照旧保留。
 
 ### Codex CLI
 

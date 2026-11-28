@@ -144,6 +144,51 @@ class TestWriteSettingsToFile:
         assert json.loads(target.read_text()) == gen.generate_settings()
 
     @staticmethod
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://hooks.example.com/hooks/stop",
+            "http://10.0.0.8:18765/hooks/stop",
+            "https://localhost:18765/hooks/stop",
+        ],
+        ids=["remote-https", "remote-http", "loopback-https"],
+    )
+    def test_keeps_http_hooks_controller_could_not_have_written(tmp_path: Path, url: str) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        foreign = {"hooks": [{"type": "http", "url": url}]}
+        target.write_text(json.dumps({"hooks": {"Stop": [foreign]}}))
+
+        gen = HookConfigGenerator()
+        gen.write_settings_to_file(target)
+
+        hooks = json.loads(target.read_text())["hooks"]
+        assert hooks["Stop"] == [foreign, *gen.generate_settings()["hooks"]["Stop"]]
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        ("host", "stale_url"),
+        [
+            ("127.0.0.1", "http://localhost:18999/hooks/stop"),
+            ("127.0.0.1", "http://[::1]:18999/hooks/stop"),
+            ("10.0.0.5", "http://10.0.0.5:18999/hooks/stop"),
+        ],
+        ids=["localhost", "ipv6-loopback", "configured-host"],
+    )
+    def test_replaces_stale_hooks_on_loopback_or_configured_host(
+        tmp_path: Path, host: str, stale_url: str
+    ) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        stale = {"hooks": [{"type": "http", "url": stale_url}]}
+        target.write_text(json.dumps({"hooks": {"Stop": [stale]}}))
+
+        gen = HookConfigGenerator(host=host)
+        gen.write_settings_to_file(target)
+
+        assert json.loads(target.read_text()) == gen.generate_settings()
+
+    @staticmethod
     def test_repeated_write_leaves_file_unchanged(tmp_path: Path) -> None:
         target = tmp_path / ".claude" / "settings.json"
         target.parent.mkdir()
