@@ -145,6 +145,7 @@ CREATING → IDLE → RUNNING            COMPLETED/STOPPED/FAILED
 - **SessionAPI.inject_prompt()**：`pool.inject_prompt()` + `event_store.store(LOG_MANUAL)`
 - **Claude Stop 后台任务判定**：CLI 与 SDK 保留 Stop hook 请求里的 `background_tasks` 快照；运行中任务非空时放行 Stop，不调用 reviewer。快照为空时照常审查；旧版运行时没有该字段时，沿用 SubagentStart/Stop 运行中名单。事件记录只存任务 ID、类型与状态，不存命令正文。该快照覆盖后台 shell 与子代理；Bash 超时转后台若被 Claude 登记为运行中 shell，也走同一判断。子代理跟踪仍供其他生命周期消费者使用。
 - **Stop HTTP 集成测试隔离**：测试启动 Orchestrator 时关闭其常驻 Hook Server，再用 aiohttp TestServer 为同一 Stop 回调分配临时端口，避免占用控制器默认端口。
+- **运行中发送用户消息**：通用 Session API 的 `send` 串行执行「暂停当前查询或残留 runtime task → 等待该 task 退出 → 注入消息 → 恢复会话」。等待 runtime task 最多 5 秒；未退出时不注入、不回成功。恢复保留迭代编号，下一次 query 递增，不能在 query 启动后回写旧编号；有原生会话 ID 时接续原会话，没有 ID 时重发初始任务并附上待发的门禁反馈和人工消息。已暂停会话直接注入并恢复；`inject` 仍是单纯入队原语。
 - **发送人工消息**：直连 session 由 SessionAPI 单请求完成「恢复池外历史对象 → 注入并留痕 → 若可续跑则恢复」；workflow 成员只经 RunCoordinator 的成员操作面完成同一请求内的顺序操作，由它检查 run 状态与成员资格，再调用 Session Orchestrator 原语。前端不能拆成 inject、resume 两次请求，避免两次请求之间成员出池或状态变化而丢失输入。
 - **恢复与超时**：崩溃遗留的 running 会话恢复成 idle/user_pause，保留 SDK 会话身份供 Run 驱动复用；Graph 成员显式 `timeout <= 0` 表示不挂超时定时器，未配置则沿用 7200 秒默认值。复用成员时由 GraphDriver 在 RestartSession 动作中提交当前模型配置，RunHost 在续跑前应用。若恢复时发现成员已自然结束，GraphDriver 请求 Run 平面回放该成员的持久结局，再据此推进执行或验收，不重建验收 session。通用 resume 状态机测试不得触发 OpenCode 宿主 DB 兜底，应预置 SDK/native session ID 或显式隔离恢复入口；OpenCode 恢复启发式由专用测试守护。
 - **上下文管理**：插件以通用能力声明是否管理上下文窗口；Orchestrator 将布尔策略交给 driver，OpenCode driver 据此配置自动 compaction，核心不依赖插件名称。事件读连接按次关闭，SSE 的共享快照限定在单个 Web 应用实例内，事件回放与最近活动通过 SQL LIMIT 限量读取。

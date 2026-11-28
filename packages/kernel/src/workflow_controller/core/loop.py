@@ -539,11 +539,11 @@ class SingleLoopEngine:
             session.clear_resume_next()
             reprompt = session.consume_resume_reprompt()
             if not session.native_session_id:
-                # 新运行时会话没有旧会话上下文：重发初始 prompt 锚定任务。
-                # 不能把非空 feedback 传进渲染——fallback 在 iteration==1 时
-                # feedback 优先会整段丢弃初始 prompt，新会话拿不到任务指令。
-                feedback = None
-                prompt = self._render_session_prompt(session, 1, None)
+                # 首轮渲染可能让 feedback 替代初始任务；先渲染任务，再附上待发输入。
+                initial = self._render_session_prompt(session, 1, None)
+                pending = [gate_fb, f"User intervention: {manual}" if manual else None]
+                feedback = "\n\n".join(item for item in pending if item) or None
+                prompt = f"{initial}\n\n{feedback}" if feedback else initial
             elif gate_fb:
                 prompt = self._render_session_prompt(session, iteration, feedback)
             elif manual:

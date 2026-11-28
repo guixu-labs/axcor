@@ -310,7 +310,7 @@ class Orchestrator:
         """激活后挂靠钩子注册位（run 平面的显式归属写点挂进临界区）。"""
         self._post_attach_hook = cb
 
-    async def deactivate_session(self, session: Session, *, pause: bool = True) -> None:
+    async def deactivate_session(self, session: Session, *, pause: bool = True) -> bool:
         """停排空绑定到指定 session 的运行时（session 控制面的公开原语）。"""
         loop = self._loops.get(session.id)
         if loop is not None:
@@ -335,7 +335,9 @@ class Orchestrator:
                         session.id,
                         SESSION_DRAIN_TIMEOUT_S,
                     )
+                    return False
             logger.info("Deactivated runtime for session %s", session.id)
+        return True
 
     async def start(self) -> None:
         # Load ghost sessions from events.db before anything else, so the UI
@@ -849,6 +851,11 @@ class Orchestrator:
         facts = self.get_session_facts(session_id)
         return facts is not None and facts.state == "idle" and facts.stop_reason == "user_pause"
 
+    def has_running_runtime(self, session_id: str) -> bool:
+        """运行中的 runtime task 是否仍绑定该会话（含排空超时后未退出的卡死 task）。"""
+        task = self._loop_tasks.get(session_id)
+        return task is not None and not task.done()
+
     def is_terminal(self, session_id: str) -> bool:
         """终态谓词：loop 落 no 且非用户暂停（暂停是可恢复断点，不是终态）；
         不在池 = 不会再产结局，按终态计。
@@ -917,11 +924,12 @@ class Orchestrator:
         """
         return _running_loop_sessions(list(self._loops.values()))
 
-    async def pause_session(self, session_id: str) -> None:
+    async def pause_session(self, session_id: str) -> bool:
         session = self.pool.get(session_id)
         if session:
             await self.pool.pause(session_id)
-            await self.deactivate_session(session)
+            return await self.deactivate_session(session)
+        return True
 
     async def play_session(self, session_id: str) -> None:
         session = self.pool.get(session_id)

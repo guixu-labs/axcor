@@ -1007,7 +1007,7 @@ class SessionAPI:
     # ── opencode session import ─────────────────────────────────────────
 
     async def send_message(self, session_id: str, text: str) -> bool:
-        """在同一个会话对象上注入消息，并恢复可续跑的直连会话。"""
+        """中断活动查询后注入用户消息，并在原会话上恢复。"""
         await self._assert_session_writable(session_id)
         session = self._orch.pool.get(session_id)
         if session is None:
@@ -1019,11 +1019,19 @@ class SessionAPI:
             session = self._orch.pool.get(session_id)
         if session is None:
             raise ValueError(f"session not found: {session_id}")
-        await self._orch.inject_prompt(session_id, text)
-        if session.state.value == "idle":
-            await self._orch.resume_session(session_id)
-            return True
-        return False
+        async with session.manual_prompt_guard():
+            was_running = session.is_query_active
+            if was_running or self._orch.has_running_runtime(session_id):
+                drained = await self._orch.pause_session(session_id)
+                if not drained:
+                    raise RuntimeError(
+                        f"session {session_id} did not drain; prompt was not delivered"
+                    )
+            await self._orch.inject_prompt(session_id, text)
+            if was_running or session.state.value == "idle":
+                await self._orch.resume_session(session_id)
+                return True
+            return False
 
     async def register_subagent_hint(
         self,

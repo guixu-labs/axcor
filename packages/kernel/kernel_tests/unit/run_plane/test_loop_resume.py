@@ -197,18 +197,16 @@ async def test_pause_and_resume_preserve_query_number(
 
 
 @pytest.mark.parametrize(
-    ("pending_kind", "pending_value"),
+    ("pending_kind", "pending_value", "expected_suffix"),
     [
-        ("gate", "reviewer 反馈：请重写输出"),
-        ("manual", "手动干预：改用方案 B"),
+        ("gate", "reviewer 反馈：请重写输出", "reviewer 反馈：请重写输出"),
+        ("manual", "手动干预：改用方案 B", "User intervention: 手动干预：改用方案 B"),
     ],
 )
-async def test_resume_without_native_session_id_reprompts_initial_even_with_feedback(
-    monkeypatch, pending_kind, pending_value
+async def test_resume_without_native_session_id_keeps_initial_and_pending_input(
+    monkeypatch, pending_kind, pending_value, expected_suffix
 ) -> None:
-    """无 native_session_id 恢复轮：即使存在待注入的 gate/manual 反馈，
-    也只重发初始 prompt——新运行时会话没有任务上下文，单独下发反馈
-    会让新会话拿不到任务指令。"""
+    """新运行时会话同时收到初始任务和已经出队的反馈或人工消息。"""
     engine = _engine()
     prompts: list[str] = []
     session = FakeSession(prompts, [[]])
@@ -226,7 +224,27 @@ async def test_resume_without_native_session_id_reprompts_initial_even_with_feed
 
     await getattr(engine, "_run_iteration")(session)
 
-    assert prompts == ["创建 output/agent-2.txt"]
+    assert prompts == [f"创建 output/agent-2.txt\n\n{expected_suffix}"]
+
+
+async def test_resume_without_native_session_id_keeps_gate_and_manual_input(monkeypatch) -> None:
+    engine = _engine()
+    prompts: list[str] = []
+    session = FakeSession(prompts, [[]])
+    session.native_session_id = None
+    session.current_iteration = 3
+    session._resume_next = True
+    session._pending_gate_feedback = "reviewer 反馈：请重写输出"
+
+    async def poll_manual_prompt() -> str:
+        return "改用方案 B"
+
+    monkeypatch.setattr(session, "poll_manual_prompt", poll_manual_prompt)
+    await getattr(engine, "_run_iteration")(session)
+
+    assert prompts == [
+        "创建 output/agent-2.txt\n\nreviewer 反馈：请重写输出\n\nUser intervention: 改用方案 B"
+    ]
 
 
 async def test_resume_after_zero_event_cancel_reprompts_initial(monkeypatch) -> None:
