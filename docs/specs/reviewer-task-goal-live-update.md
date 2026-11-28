@@ -16,7 +16,7 @@ reviewer 的 prompt 由固定模板加「会话任务目标」段组成，可变
 
 检查点重放的 `reviewer_task_goal` 覆盖项也只写 `criteria.task_goal`：origin 自带 reviewer 快照时，深拷贝带来的旧目标会让覆盖项到不了 reviewer。
 
-Web 控制台的 Agent 调用树里，Reviewer 节点由 reviewer hook 事件推导，第一次评审发生前节点不存在；节点详情里的「Reviewer 目标」是只读的，口径是「启动时冻结」。
+Web 控制台的 Agent 调用树里，Reviewer 节点由 reviewer hook 事件推导，第一次评审发生前节点不存在；节点详情里的「Reviewer 目标」是只读的，含义是「启动时冻结」。
 
 ## 目标
 
@@ -57,10 +57,10 @@ Web 控制台的 Agent 调用树里，Reviewer 节点由 reviewer hook 事件推
 
 ### 不按会话状态设限
 
-1. 能否更新不依赖会话状态，也不依赖 reviewer 节点状态（如 `let_exit` 之后的 completed）。判定「会话是否结束」没有可靠口径，而收窄验收标准后再次判定正是本能力要支撑的场景。
+1. 能否更新不依赖会话状态，也不依赖 reviewer 节点状态（如 `let_exit` 之后的 completed）。判定「会话是否结束」没有可靠的判定依据，而收窄验收标准后再次判定正是本能力要支撑的场景。
 2. 会话在内存池内：直接更新。
-3. 会话已离开内存池：沿用 `SessionAPI.get_session` 的按需恢复口径，即 `pool.restore_from_store` → 更新 → `pool.persist` → `pool.discard`，不改变池驻留。
-4. 账面上不存在（已删除或从未存在）：抛 `ValueError`，不做任何写入。
+3. 会话已离开内存池：沿用 `SessionAPI.get_session` 的按需恢复方式，即 `pool.restore_from_store` → 更新 → `pool.persist` → `pool.discard`，不改变池驻留。
+4. 会话记录不存在（已删除或从未存在）：抛 `ValueError`，不做任何写入。
 5. workflow（graph）成员会话走同一入口，不套用 pause / stop / inject 的 409 拦截，与 `reviewer-mode` 一致。run 平面独占写的是成员的 pause / resume / stop / inject，reviewer 设置不在其列。
 
 ### 继承
@@ -71,7 +71,7 @@ Web 控制台的 Agent 调用树里，Reviewer 节点由 reviewer hook 事件推
 
 ### 审计
 
-1. 每次成功更新发一条 `LOG_AUTO` 事件，`action=reviewer_task_goal_updated`，`data` 含 `previous_task_goal` 与 `task_goal` 全文。评审结论取决于当时的目标，账本要能对上「哪次判定用的是哪版目标」。
+1. 每次成功更新发一条 `LOG_AUTO` 事件，`action=reviewer_task_goal_updated`，`data` 含 `previous_task_goal` 与 `task_goal` 全文。评审结论取决于当时的目标，事件记录要能对上「哪次判定用的是哪版目标」。
 2. 不用 `LOG_MANUAL`：前端的等待人工回复判定把 `log_manual` 当作人工回复，混入会误清等待状态。
 3. 时间线不展示该事件。现有过滤器已隐藏不带 `hook` 字段的 `log_auto`，前端无需为此改动。
 
@@ -99,7 +99,7 @@ Web 控制台的 Agent 调用树里，Reviewer 节点由 reviewer hook 事件推
 5. 编辑器不按会话状态或节点状态禁用。
 6. 关闭弹窗即丢弃未保存的草稿，不弹确认。
 7. 弹窗打开期间，其他端保存的新值不覆盖正在编辑的草稿；两端都保存时以最后一次为准。
-8. 删除 `showReviewerTaskGoal` 与只读 `<pre>`；`types/api.ts` 中 `reviewer_task_goal` 的注释同步改口径。
+8. 删除 `showReviewerTaskGoal` 与只读 `<pre>`；`types/api.ts` 中 `reviewer_task_goal` 的注释同步修改。
 
 ### 失败语义
 
@@ -117,7 +117,7 @@ Web 控制台的 Agent 调用树里，Reviewer 节点由 reviewer hook 事件推
 axcor：
 
 1. `ReviewerService.set_task_goal()`；`Orchestrator.set_session_reviewer_task_goal()` 与审计事件构造函数（`orchestrator_helpers.py`）；`SessionAPI.set_session_reviewer_task_goal()`。
-2. `SessionInfo.reviewer_task_goal` 的注释改口径。
+2. `SessionInfo.reviewer_task_goal` 的注释改为「会话当前生效的值」。
 3. agent-traceback：`_apply_overrides` 的 `reviewer_task_goal` 覆盖项两处同写；测试改用自带 reviewer 快照的 origin，断言 `criteria`、快照与重建的 reviewer 运行时配置。
 4. 内核测试：运行中会话更新后两处落点、在跑 reviewer、持久化与审计事件一致；空目标与不存在的会话被拒绝且无副作用；池外会话更新后不改变池驻留；workflow 成员会话不被拒。
 5. `docs/ARCHITECTURE.md` Session Orchestrator 第 6 条补充 `task_goal` 可会话内更新；`docs/event-system.md` 的 `LOG_AUTO` 发射点表补一行。
@@ -125,7 +125,7 @@ axcor：
 
 opsbot：
 
-7. `web/routes/sessions_routes.py` 增加路由；`tests/contract/manifest.yaml` 登记后运行 `python scripts/generate_api_contract_doc.py` 重新生成 `docs/api-contract.md`；契约测试与路由测试补对应用例。
+7. `web/routes/sessions_routes.py` 增加路由；`tests/contract/manifest.yaml` 登记后运行 `python scripts/generate_api_contract_doc.py` 重新生成 `docs/api-contract.md`；`tests/contract/test_stable_api_contract.py` 与路由测试补对应用例。
 8. `useTopology.ts` 常驻 Reviewer 节点；`SessionDetailView.vue` 的 Reviewer 目标编辑器与更新逻辑；`types/api.ts` 注释；更新 `useTopology.test.ts` 与 `SessionDetailView.test.ts`。
 9. `docs/Web-UI.md`「Agent 调用树」条目中关于 Reviewer 目标的描述改写。
 10. 升级 axcor 标签与 `axcor.lock`，执行 `uv lock`。

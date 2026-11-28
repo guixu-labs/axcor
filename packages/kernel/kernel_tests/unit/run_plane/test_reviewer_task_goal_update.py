@@ -32,7 +32,7 @@ _UPDATE_ACTION = "reviewer_task_goal_updated"
 
 
 def _orchestrator(tmp_path: Path) -> Orchestrator:
-    """名册落 tmp_path 的 orchestrator（不启动，事件面已接线）。"""
+    """会话记录落 tmp_path 的 orchestrator（不启动，事件面已接线）。"""
     return Orchestrator(AppConfig(project_dir=str(tmp_path)), default_project_dir=tmp_path)
 
 
@@ -55,14 +55,14 @@ def _live_task_goal(orchestrator: Orchestrator, session_id: str) -> str:
 
 
 def _roster_task_goals(orchestrator: Orchestrator, session_id: str) -> tuple[str, str]:
-    """名册行里的 (reviewer.task_goal, criteria.task_goal)。"""
+    """sessions 表行里的 (reviewer.task_goal, criteria.task_goal)。"""
     row = orchestrator.event_router.get_session_sync(session_id)
     config = json.loads(row["config_json"])
     return config["reviewer"]["task_goal"], config["criteria"]["task_goal"]
 
 
 async def _audit_events(orchestrator: Orchestrator, session_id: str) -> list[dict[str, Any]]:
-    """账本里的目标更新审计事件 data。"""
+    """事件记录里的目标更新审计事件 data。"""
     events = await orchestrator.event_router.get_events(session_id)
     return [
         event.data
@@ -72,7 +72,7 @@ async def _audit_events(orchestrator: Orchestrator, session_id: str) -> list[dic
 
 
 async def test_update_rewrites_both_goals_live_reviewer_and_ledger(tmp_path: Path) -> None:
-    """更新同时改写两处落点、在跑 reviewer 与名册，并落一条含前后值的审计事件。"""
+    """更新同时改写两处落点、在跑 reviewer 与 sessions 表，并落一条含前后值的审计事件。"""
     orchestrator = _orchestrator(tmp_path)
     session = await orchestrator.pool.create(_worker_config("旧目标"))
     await orchestrator.ensure_reviewer_snapshot(session.id)
@@ -101,7 +101,7 @@ async def test_rebuilt_reviewer_snapshot_picks_up_updated_goal(tmp_path: Path) -
 
 
 async def test_update_restores_evicted_session_without_keeping_it_resident(tmp_path: Path) -> None:
-    """已离开内存池的会话按需恢复后更新，名册落地且不改变池驻留。"""
+    """已离开内存池的会话按需恢复后更新，写入 sessions 表且不改变池驻留。"""
     orchestrator = _orchestrator(tmp_path)
     session = await orchestrator.pool.create(_worker_config("旧目标"))
     orchestrator.pool.discard(session.id)
