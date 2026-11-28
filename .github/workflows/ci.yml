@@ -7,23 +7,52 @@ on:
   workflow_call:
 
 jobs:
-  backend:
+  forbidden-word-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: PR 用词检查
-        if: github.event_name == 'pull_request'
+      - name: 用词检查
         env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: python scripts/check_ai_words.py --pr "$PR_BASE" "$PR_HEAD"
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}
+        run: |
+          : "${BASE_SHA:?Missing base SHA}" "${HEAD_SHA:?Missing head SHA}"
+          zero_sha=0000000000000000000000000000000000000000
+          if [[ "$BASE_SHA" == "$zero_sha" || "$HEAD_SHA" == "$zero_sha" ]]; then
+            echo "::error::base/head SHA 为全零（如新建分支推送），无法确定词检范围。请在已有 base/head 的提交上运行，或改用 pull_request / merge_group 事件。"
+            exit 1
+          fi
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            if ! git fetch --no-tags origin "$BASE_SHA" 2>"$RUNNER_TEMP/fetch-base.log"; then
+              cat "$RUNNER_TEMP/fetch-base.log" >&2
+              echo "::error::无法获取 base 提交 $BASE_SHA （可能已被 force push 淘汰而不可达），无法执行词检。请确认该提交仍可达后重试。"
+              exit 1
+            fi
+          fi
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            if ! git fetch --no-tags origin "$HEAD_SHA" 2>"$RUNNER_TEMP/fetch-head.log"; then
+              cat "$RUNNER_TEMP/fetch-head.log" >&2
+              echo "::error::无法获取 head 提交 $HEAD_SHA （可能已被 force push 淘汰而不可达），无法执行词检。请确认该提交仍可达后重试。"
+              exit 1
+            fi
+          fi
+          python scripts/check_ai_words.py --pr "$BASE_SHA" "$HEAD_SHA"
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
       - name: 安装锁定依赖
         run: uv sync --locked

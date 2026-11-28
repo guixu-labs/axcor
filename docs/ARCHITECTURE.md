@@ -119,6 +119,12 @@ Import Linter 对当前无违规的边界实施零容忍检查：`plugin` SDK �
 
 运行期隔离由根 `tests/conftest.py` 加载的 `tests/support/pytest_hermetic.py` 统一实施。普通测试会在收集阶段前把 `HOME` 与 `XDG_CONFIG_HOME` 切换到会话级临时目录，并禁止外部网络连接及 `getaddrinfo`、`gethostbyname`、`gethostbyname_ex`、`gethostbyaddr`、`getfqdn` 等公开 DNS 查询入口；loopback、Unix Socket 等进程内集成测试仍可使用。每个测试结束时校验进程环境并在报告泄漏前恢复现场，测试会话结束后再恢复启动 Pytest 前的环境、网络函数与临时目录。需要真实 LLM 或外部服务的测试必须标记为 `live_llm` / `reviewer_recall`，默认跳过，只有显式传入 `--live` 才解除外部网络限制。配置隔离完全由测试进程环境实现，生产配置解析不读取测试专用变量，避免测试访问用户真实 Workflow Controller 配置的同时不改变生产行为。
 
+### CI 用词检查
+
+GitHub Actions 的 `forbidden-word-check` job 与 `backend` 并行并独立报告结果。它拉取完整 Git 历史，通过 `scripts/check_ai_words.py --pr` 扫描 base 与 head 的共同祖先到 head 之间的最终差异。PR 使用自身的 base 和 head，合并队列使用 `merge_group` 的 base 和 head，发布流程调用 CI 时使用推送前后的提交。base/head 为全零（如新建分支推送）或 base/head 提交不可获取时，job 以带指引的 `::error` 失败，不静默放行。
+
+拆分后 `backend` 不再承载词检拦截，仓库分支保护（含合并队列的检查清单）必须把 `forbidden-word-check` 登记为必需检查，否则合并前不再强制词检。发布流程中词检失败发生在 `version` job 推送标签之后，会留下已有标签但没有 Release 的中间态；恢复方式与发布流程中其他 CI 检查失败相同（继续向前 bump 版本重发）。
+
 ## Session 生命周期
 
 ### OpenCode 文件归因失败收尾
