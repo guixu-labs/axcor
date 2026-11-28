@@ -57,7 +57,8 @@ exit，断言聚焦在 `selected` 选对了哪个选项（`auq_must_select_one_o
 `block_with_feedback`），并把 STOP 判据收紧为「会话任务目标下的全部必需项已完成」、移除
 「外部阻塞 → let_exit」出口。13 项实模基线尚未在有实模凭据的环境重跑，需重点核对
 fixture 08 / 12 两个 let_exit 正向样例在收紧后仍放行；离线 prompt 断言已覆盖本次改动，
-`pytest tests/regression/reviewer --live` 结果待补录。
+`pytest tests/regression/reviewer --live` 结果待补录。live-llm 作业只跑 fixture 13 / 14，
+fixture 01-12 的全量实模回放不再由合并队列产出，上述补录需手动执行。
 
 reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 循环、无 CC 框架），
 消除了 agent-loop 路径的 run-to-run 方差——`pytest tests/regression/reviewer --live` 现在
@@ -86,6 +87,12 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，
    只验 fixture 结构 + 驱动逻辑）；改了 prompt 则加 `--live` 跑真实 LLM。
 
+> **CI 钉死的节点 ID**：`.github/workflows/live-llm.yml` 固定选择
+> `test_reviewer_replay[13_...]` 和 `test_reviewer_replay[14_...]` 两个节点 ID。
+> 若对 fixture 13 / 14 重命名或重新编号，须同步更新该选择列表，否则 CI 会
+> no tests collected（pytest 退出码 4 / 5）直接红掉。同理，其他 fixture 新增
+> `repeat:` 只在本地生效，除非同步扩 CI 的选择列表，否则实模不会多回放。
+
 ## CI 并行配置
 
 在 GitHub 的 `live-llm` Environment 中设置必填变量 `LIVE_LLM_ANTHROPIC_MODELS`。
@@ -94,6 +101,8 @@ CI 对每个配置的模型只运行 fixture 13 和 14。每个 fixture 回放 5
 日志按模型展示，所有模型均通过时 `live-llm` 检查才通过。
 
 并行运行时所有模型共用同一端点与凭证，每个凭证的速率限制（429 / 重试预算）也是共享的：
-单模型共 10 次调用，按单次超时 300s、最多重试 1 次估算约 100min。
+单模型共 10 次调用（fixture 13 / 14 各 5 次）。回放测试用裸 `DriverReviewerRunner()` 构造，
+未配置 auth rotator，`_run` 的限流重试不触发，429 或超时直接抛错，因此单模型最坏约
+10 × 300s ≈ 50min（无重试），240min 预算更加充裕。
 作业保留 240min 的超时预算，以容纳多个模型共用凭证时的限流和重试。
 作业超时或被取消时，步骤会先打印各模型已产生的部分日志再清理临时文件，避免长作业中断后无线索。
