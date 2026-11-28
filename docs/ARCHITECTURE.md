@@ -121,7 +121,7 @@ Import Linter 对当前无违规的边界实施零容忍检查：`plugin` SDK �
 
 ### CI 用词检查
 
-GitHub Actions 的 `forbidden-word-check` job 与 `backend` 并行并独立报告结果。它拉取完整 Git 历史，通过 `scripts/check_ai_words.py --pr` 扫描 base 与 head 的共同祖先到 head 之间的最终差异。PR 使用自身的 base 和 head，合并队列使用 `merge_group` 的 base 和 head，发布流程调用 CI 时使用推送前后的提交。base/head 为全零（如新建分支推送）或 base 提交不可获取时，job 以带指引的 `::error` 失败，不静默放行。
+GitHub Actions 的 `forbidden-word-check` job 与 `backend` 并行并独立报告结果。它拉取完整 Git 历史，通过 `scripts/check_ai_words.py --pr` 扫描 base 与 head 的共同祖先到 head 之间的最终差异。PR 使用自身的 base 和 head，合并队列使用 `merge_group` 的 base 和 head，发布流程调用 CI 时使用推送前后的提交。base/head 为全零（如新建分支推送）或 base/head 提交不可获取时，job 以带指引的 `::error` 失败，不静默放行。
 
 拆分后 `backend` 不再承载词检拦截，仓库分支保护（含合并队列的检查清单）必须把 `forbidden-word-check` 登记为必需检查，否则合并前不再强制词检。发布流程中词检失败发生在 `version` job 推送标签之后，会留下已有标签但没有 Release 的中间态；恢复方式与发布流程中其他 CI 检查失败相同（继续向前 bump 版本重发）。
 
