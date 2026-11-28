@@ -119,6 +119,10 @@ Import Linter 对当前无违规的边界实施零容忍检查：`plugin` SDK �
 
 运行期隔离由根 `tests/conftest.py` 加载的 `tests/support/pytest_hermetic.py` 统一实施。普通测试会在收集阶段前把 `HOME` 与 `XDG_CONFIG_HOME` 切换到会话级临时目录，并禁止外部网络连接及 `getaddrinfo`、`gethostbyname`、`gethostbyname_ex`、`gethostbyaddr`、`getfqdn` 等公开 DNS 查询入口；loopback、Unix Socket 等进程内集成测试仍可使用。每个测试结束时校验进程环境并在报告泄漏前恢复现场，测试会话结束后再恢复启动 Pytest 前的环境、网络函数与临时目录。需要真实 LLM 或外部服务的测试必须标记为 `live_llm` / `reviewer_recall`，默认跳过，只有显式传入 `--live` 才解除外部网络限制。配置隔离完全由测试进程环境实现，生产配置解析不读取测试专用变量，避免测试访问用户真实 Workflow Controller 配置的同时不改变生产行为。
 
+### CI 用词检查
+
+GitHub Actions 的 `forbidden-word-check` job 与 `backend` 并行并独立报告结果。它拉取完整 Git 历史，通过 `scripts/check_ai_words.py --pr` 扫描 base 与 head 的共同祖先到 head 之间的最终差异。PR 使用自身的 base 和 head，合并队列使用 `merge_group` 的 base 和 head，发布流程调用 CI 时使用推送前后的提交。
+
 ## Session 生命周期
 
 ### OpenCode 文件归因失败收尾
