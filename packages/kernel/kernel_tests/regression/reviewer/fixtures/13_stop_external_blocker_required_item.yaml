@@ -1,5 +1,6 @@
 name: stop_external_blocker_required_item
 kind: stop_hook
+repeat: 5
 
 description: |
   Issue #14 回归。交付文件已落盘，本轮可以完成的工作已经做完，必需的设备验收仍受外部占用阻塞。

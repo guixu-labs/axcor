@@ -16,9 +16,8 @@ jobs:
       (github.event_name == 'merge_group' && github.event.merge_group.base_ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    # 12 个 fixture，单次调用超时 300s，限流时再重试 1 次，单模型最坏约 12×600s=120min。
-    # 多模型并行共用同一端点与凭证，限流 / 重试是共享预算，模型越多越可能超过单模型最坏值，
-    # 故上调到 240min（理由见 BASELINE.md「CI 并行配置」）。
+    # Fixture 13 和 14 各调用 5 次，单模型最坏约 100min。
+    # 多模型并行共用限流预算，保留 240min（见 BASELINE.md「CI 并行配置」）。
     timeout-minutes: 240
     # Configure required reviewers before adding the model token to this environment.
     environment: live-llm
@@ -69,11 +68,13 @@ jobs:
           trap 'dump_partial_logs; exit 143' TERM
           trap 'rm -rf -- "$logs_dir"' EXIT
           pids=()
-          # 只跑固定的 reviewer replay 目录：合并队列执行 base+PR 合并代码，
+          # 固定 reviewer replay 的两个 pytest 节点：合并队列执行 base+PR 合并代码，
           # 不能按 marker 全仓选择测试，否则 fork PR 可在别处新增打标测试窃取实模凭证。
           for index in "${!models[@]}"; do
             ANTHROPIC_MODEL="${models[$index]}" \
-              uv run --locked pytest -q --live packages/kernel/kernel_tests/regression/reviewer/ \
+              uv run --locked pytest -q --live \
+                'packages/kernel/kernel_tests/regression/reviewer/test_reviewer_replay.py::test_reviewer_replay[13_stop_external_blocker_required_item]' \
+                'packages/kernel/kernel_tests/regression/reviewer/test_reviewer_replay.py::test_reviewer_replay[14_stop_issue_111_path_checks_only]' \
               > "$logs_dir/$index.log" 2>&1 &
             pids+=("$!")
           done
