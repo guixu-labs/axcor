@@ -1335,7 +1335,10 @@ async def _run_poll_subagent_stream(
     duration: float,
     to_thread=None,
 ) -> None:
-    """给 _poll_subagent_stream 打快轮询与假 db 读，跑 duration 秒后取消。"""
+    """给 _poll_subagent_stream 打快轮询与假 db 读，跑 duration 秒后取消。
+
+    duration 取轮询间隔的数十倍：余量留给线程池调度，机器负载高时它可能延迟上百毫秒。
+    """
     from workflow_controller.driver import opencode as oc_module
 
     monkeypatch.setattr(oc_module, "_SUBAGENT_POLL_INTERVAL", 0.01)
@@ -1403,7 +1406,7 @@ class TestPollSubagentStream:
             read_parts=fake_read_parts,
             started=started,
             stopped=set(),
-            duration=0.1,
+            duration=1.0,
         )
 
         assert "ses_sub" in started
@@ -1436,7 +1439,7 @@ class TestPollSubagentStream:
             read_parts=lambda sid, env=None, max_parts=200: [],
             started=set(),
             stopped=set(),
-            duration=0.05,
+            duration=0.5,
         )
         assert starts == []
 
@@ -1453,7 +1456,7 @@ class TestPollSubagentStream:
             read_parts=lambda sid, env=None, max_parts=200: [],
             started=set(),
             stopped=set(),
-            duration=0.03,
+            duration=0.3,
         )
 
     async def test_stopped_subsession_emits_no_start_or_progress(self, monkeypatch):
@@ -1480,7 +1483,7 @@ class TestPollSubagentStream:
             ],
             started=set(),
             stopped=stopped,
-            duration=0.05,
+            duration=0.5,
         )
 
         assert len(starts) == 0
@@ -1517,7 +1520,7 @@ class TestPollSubagentStream:
             read_parts=lambda sid, env=None, max_parts=200: [],
             started=set(),
             stopped=set(),
-            duration=0.08,
+            duration=0.8,
         )
 
         by_id = {data["agent_id"]: data for _sid, data in starts}
@@ -1567,7 +1570,7 @@ class TestPollSubagentStream:
             read_parts=fake_read_parts,
             started=set(),
             stopped=stopped,
-            duration=0.12,
+            duration=1.2,
             to_thread=_subagent_stop_to_thread(42),
         )
 
@@ -1624,7 +1627,7 @@ class TestPollSubagentStream:
             read_parts=fake_read_parts,
             started=set(),
             stopped=stopped,
-            duration=0.1,
+            duration=1.0,
             to_thread=_subagent_stop_to_thread(7),
         )
 

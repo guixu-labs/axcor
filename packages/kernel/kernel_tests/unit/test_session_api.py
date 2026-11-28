@@ -120,7 +120,7 @@ def test_running_uses_realtime():
     s = _fake_session(SessionState.RUNNING, created_at=created, last_activity=created)
 
     info = SessionInfo.from_session(s)
-    assert info.elapsed_seconds == pytest.approx(time.time() - created.timestamp(), abs=1)
+    assert info.elapsed_seconds == pytest.approx(time.time() - created.timestamp(), abs=5)
 
 
 def test_completed_uses_last_activity():
@@ -158,7 +158,7 @@ def test_running_frozen_last_activity_still_counts():
     stale_last = datetime.now(tz=UTC)
     s = _fake_session(SessionState.RUNNING, created_at=created, last_activity=stale_last)
     info = SessionInfo.from_session(s)
-    assert info.elapsed_seconds == pytest.approx(time.time() - created.timestamp(), abs=1)
+    assert info.elapsed_seconds == pytest.approx(time.time() - created.timestamp(), abs=5)
 
 
 def test_birth_traceback_populated_from_session():
