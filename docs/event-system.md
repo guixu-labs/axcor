@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 `src/workflow_controller/api/event_api.py:38`
 
-纯代理 EventStoreRouter，提供两个方法供 SSE 和 Web API（控制台侧）调用：
+纯代理 EventStoreRouter，提供两个方法供 SSE 和内核 HTTP API（`api/http/routes`）调用：
 
 - `get_since(last_ts, session_id="")` → `(new_ts, list[EventInfo])`：timestamp 高水位增量查询
 - `get_recent(limit=50)` → `list[EventInfo]`：跨库最近 N 条
@@ -436,7 +436,7 @@ opencode 的 task 工具在一个已完成 tool_use 事件里（call + result �
 
 ### 5.3 SSE 推送
 
-`web/routes/sse_routes.py`（控制台侧）
+`src/workflow_controller/api/http/routes/sse_routes.py`（内核 HTTP 表现层；`workflow-controller serve` 与控制台 `web` 共用同一实现）
 
 SSE 不走 EventBus 观察者，而是 250ms 轮询 `api.event.get_since(last_event_ts)`：
 

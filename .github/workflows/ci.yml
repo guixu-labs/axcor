@@ -71,6 +71,9 @@ jobs:
       - name: headless fake run 冒烟
         run: $RUNNER_TEMP/kernel-only/bin/python scripts/fake_run_smoke.py
 
+      - name: serve HTTP fake run 冒烟
+        run: $RUNNER_TEMP/kernel-only/bin/python scripts/serve_smoke.py
+
   subset:
     runs-on: ubuntu-latest
     strategy:

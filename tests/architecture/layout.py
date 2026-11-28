@@ -62,13 +62,9 @@ def plugin_package_dir(name: str) -> Path | None:
     return None
 
 
-def web_routes_root() -> Path | None:
-    """web 路由目录；web 不在本仓的布局返回 None。"""
-    for root in source_roots():
-        candidate = root / "workflow_controller" / "web" / "routes"
-        if candidate.is_dir():
-            return candidate
-    return None
+def http_routes_root() -> Path:
+    """内核 HTTP 路由目录（api/http/routes）。"""
+    return kernel_package_root() / "api" / "http" / "routes"
 
 
 def hookserver_package_root() -> Path | None:

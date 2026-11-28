@@ -98,27 +98,33 @@ def test_fake_run_resumes_after_hard_crash_headless(tmp_path: Path) -> None:
     assert "fake_resumed" in recover["event_types"]
 
 
-def test_web_import_blocker_blocks_only_web_imports() -> None:
-    """负向验收：守卫自身必须拦下 workflow_controller.web 导入，其余模块名放行。"""
-    from tests.support.headless_acceptance import WebImportBlocker
+def test_http_layer_import_blocker_blocks_only_http_entry_modules() -> None:
+    """负向验收：守卫自身必须拦下控制台 web 与内核 HTTP 表现层的导入，其余模块名放行。"""
+    from tests.support.headless_acceptance import HttpLayerImportBlocker
 
-    blocker = WebImportBlocker()
-    # 已缓存的 web 模块会绕过 meta_path，先摘除再恢复，保证断言命中守卫本身
-    saved = {
+    # 已缓存的模块会绕过 meta_path，先摘除再恢复，保证断言命中守卫本身
+    guarded = ("workflow_controller.web", "workflow_controller.api.http")
+    cached = {
         name: module
         for name, module in sys.modules.items()
-        if name == "workflow_controller.web" or name.startswith("workflow_controller.web.")
+        if any(name == pkg or name.startswith(f"{pkg}.") for pkg in guarded)
     }
-    for name in saved:
+    for name in cached:
         del sys.modules[name]
+    blocker = HttpLayerImportBlocker()
     sys.meta_path.insert(0, blocker)
     try:
-        with pytest.raises(ImportError, match="禁止导入"):
-            importlib.import_module("workflow_controller.web")
-        with pytest.raises(ImportError, match="禁止导入"):
-            importlib.import_module("workflow_controller.web.routes")
+        for module_name in (
+            "workflow_controller.web",
+            "workflow_controller.web.routes",
+            "workflow_controller.api.http",
+            "workflow_controller.api.http.routes",
+        ):
+            with pytest.raises(ImportError, match="禁止导入"):
+                importlib.import_module(module_name)
     finally:
         sys.meta_path.remove(blocker)
-        sys.modules.update(saved)
+        sys.modules.update(cached)
     assert blocker.find_spec("workflow_controller.core") is None
+    assert blocker.find_spec("workflow_controller.hooks") is None
     assert blocker.find_spec("os") is None

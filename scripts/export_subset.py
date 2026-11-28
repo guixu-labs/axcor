@@ -48,13 +48,16 @@ COPY_IGNORE = shutil.ignore_patterns(
     "__pycache__", ".pytest_cache", ".ruff_cache", "build", "dist", "*.egg-info"
 )
 # 随子集带走的根级文件（.gitignore 防快照线误收构建产物）；插件测试的场景
-# 输入内聚在各自包内（tests/fixtures），examples 不再随子集
+# 输入内聚在各自包内（tests/fixtures），examples 不再随子集。内核面 API
+# 约定文档与其生成脚本随附（约定测试校验文档与清单同步）。
 ROOT_FILES = (
     Path("LICENSE"),
     Path(".gitignore"),
     Path("conftest.py"),
     Path("scripts/check_ai_words.py"),
     Path("scripts/ai-words.txt"),
+    Path("scripts/generate_api_contract_doc.py"),
+    Path("docs/api-contract.md"),
 )
 
 

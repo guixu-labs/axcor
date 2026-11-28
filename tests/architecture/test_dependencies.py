@@ -154,8 +154,18 @@ def test_scanner_honors_python_source_encoding_declarations(tmp_path: Path) -> N
     ("relative_path", "source_text", "expected_rule"),
     [
         (
-            "workflow_controller/web/routes/__init__.py",
-            "from workflow_controller.web.app import create_app\n",
+            "workflow_controller/api/http/routes/__init__.py",
+            "from workflow_controller.api.http.app import create_app\n",
+            "entrypoint-bypasses-core-api",
+        ),
+        (
+            "workflow_controller/api/http/routes/sample.py",
+            "from workflow_controller.core.orchestrator import Orchestrator\n",
+            "entrypoint-bypasses-core-api",
+        ),
+        (
+            "workflow_controller/api/http/routes/sample.py",
+            "from workflow_controller.api.http.mounting import register_kernel_routes\n",
             "entrypoint-bypasses-core-api",
         ),
         (
@@ -211,12 +221,28 @@ def test_each_dependency_rule_has_a_synthetic_red_case(
     ("relative_path", "source_text"),
     [
         (
-            "workflow_controller/web/routes/sample.py",
+            "workflow_controller/api/http/routes/sample.py",
             "from workflow_controller.api import CoreAPI\n",
         ),
         (
-            "workflow_controller/web/routes/sample.py",
-            "from workflow_controller.web.routes import sse_routes\n",
+            "workflow_controller/api/http/routes/sample.py",
+            "from workflow_controller.api.http.routes import sse_routes\n",
+        ),
+        (
+            "workflow_controller/api/http/routes/common.py",
+            "from workflow_controller.api.http.routes.sessions_routes import start_session\n",
+        ),
+        (
+            "workflow_controller/api/http/routes/sample.py",
+            "from workflow_controller.api.core_api import CoreAPI\n",
+        ),
+        (
+            "workflow_controller/api/http/sample.py",
+            "from workflow_controller.config.settings import AppConfig\n",
+        ),
+        (
+            "workflow_controller/headless.py",
+            "from workflow_controller.api.core_api import boot\n",
         ),
         (
             "workflow_controller/web/context_bay/sample.py",

@@ -62,7 +62,7 @@ class RuleDefinition:
 
 DEPENDENCY_RULES = {
     "entrypoint-bypasses-core-api": RuleDefinition(
-        problem="A Web route or headless entrypoint imports backend internals.",
+        problem="An HTTP route or headless entrypoint imports backend internals.",
         fix_guidance=(
             "Expose the required capability through workflow_controller.api, then replace the "
             "internal import with that API."
@@ -150,7 +150,16 @@ def _plugin_name(module: str) -> str | None:
     return None
 
 
-def _entrypoint_rule(target: str, is_web_route: bool, is_context_bay_staging: bool) -> str | None:
+def _bypasses_allowed_edges(target: str, allowed: tuple[str, ...]) -> str | None:
+    """目标落在 workflow_controller 内却不属于允许边：命中入口层绕过规则。"""
+    if _is_module_or_descendant(target, "workflow_controller") and not _matches_any_package(
+        target, allowed
+    ):
+        return "entrypoint-bypasses-core-api"
+    return None
+
+
+def _entrypoint_rule(target: str, is_http_route: bool, is_context_bay_staging: bool) -> str | None:
     """入口层允许边判定后再决定是否命中 entrypoint 规则。"""
     if is_context_bay_staging:
         # 领域暂存包：transcript（转录定位）与 context_bay_exporter
@@ -161,15 +170,17 @@ def _entrypoint_rule(target: str, is_web_route: bool, is_context_bay_staging: bo
             "workflow_controller.transcript",
             "workflow_controller.web.context_bay",
         )
-    elif is_web_route:
-        allowed = ("workflow_controller.api", "workflow_controller.web.routes")
+    elif is_http_route:
+        # 内核 HTTP 路由只经 CoreAPI 门面访问内核（含 api/http/routes 同目录互引）；
+        # 应用工厂与挂载层虽在 api 包内，路由不得回导
+        if _is_module_or_descendant(target, "workflow_controller.api.http.routes"):
+            return None
+        if _is_module_or_descendant(target, "workflow_controller.api.http"):
+            return "entrypoint-bypasses-core-api"
+        allowed = ("workflow_controller.api",)
     else:
         allowed = ("workflow_controller.api",)
-    if _is_module_or_descendant(target, "workflow_controller") and not _matches_any_package(
-        target, allowed
-    ):
-        return "entrypoint-bypasses-core-api"
-    return None
+    return _bypasses_allowed_edges(target, allowed)
 
 
 def _builtin_plugin_rule(source_plugin: str, target: str) -> str | None:
@@ -222,10 +233,10 @@ def _record_rule(record: ImportRecord) -> tuple[str | None, str]:
     target = _effective_target(record)
     source = record.source_module
 
-    is_web_route = _is_module_or_descendant(source, "workflow_controller.web.routes")
+    is_http_route = _is_module_or_descendant(source, "workflow_controller.api.http.routes")
     is_context_bay_staging = _is_module_or_descendant(source, "workflow_controller.web.context_bay")
-    if is_web_route or is_context_bay_staging or source == "workflow_controller.headless":
-        return _entrypoint_rule(target, is_web_route, is_context_bay_staging), target
+    if is_http_route or is_context_bay_staging or source == "workflow_controller.headless":
+        return _entrypoint_rule(target, is_http_route, is_context_bay_staging), target
     if _matches_any_package(source, ("workflow_controller.api", "workflow_controller.core")):
         if _is_module_or_descendant(target, "workflow_controller.plugins"):
             return "api-or-core-imports-concrete-plugin", target

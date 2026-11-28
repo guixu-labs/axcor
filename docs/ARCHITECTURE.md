@@ -6,7 +6,7 @@ Workflow Controller 是一个**领域无关的 AI Agent 调度框架**，核心�
 
 > `ops` = operations（调度执行），非 operator。框架不绑定任何领域语义阶段；领域知识靠 plugin / skill / agent / prompt 注入。算子生成是其首个应用场景，但同一个框架可驱动代码迁移、文档工程等任意长 horizon agent 任务。
 
-两个 UI 前端 —— **Web**（FastAPI + Vue 3 SPA）、**Headless**（JSON→stdout）—— 共享同一个 CoreAPI 层，后者委托给 Core orchestrator 与 Driver 层。
+三种使用面 —— **Web**（FastAPI + Vue 3 SPA，住控制台发行包）、**内核 HTTP API**（`workflow-controller serve`）、**Headless**（JSON→stdout）—— 共享同一个 CoreAPI 层，后者委托给 Core orchestrator 与 Driver 层。
 
 ## 架构图
 
@@ -14,7 +14,7 @@ Workflow Controller 是一个**领域无关的 AI Agent 调度框架**，核心�
 
 ## 统一入口：`boot()`
 
-两个 UI 都调用同一个函数启动：
+三种使用面都调用同一个函数启动：
 
 ```python
 # api/core_api.py
@@ -53,18 +53,31 @@ async def boot(
 
 > `settings_dir` 让 Headless 注入自定义配置目录；`set_config_runtime` 把 `workflow-controller.yaml` 的 `runtime` 字段注入 `driver/factory.py` 全局，使 web/headless 两路的所有 `create_driver(None)` 调用点（worker/reviewer/feedback/breather）都遵守 yaml 配置——否则 Headless 会卡在默认 `claude_sdk`（见 factory.py 的三级优先级：`WORKFLOW_CONTROLLER_DRIVER` env > 显式参数 > yaml runtime > 默认）。
 
-| UI | 文件 | 调用 |
+| 使用面 | 文件 | 调用 |
 |----|------|------|
-| Web | `web/app.py:lifespan` | `await boot(cfg, _config_path)` |
+| 内核 HTTP API | `api/http/app.py:lifespan` | `await boot(context.config, context.config_path, settings_dir=..., hook_port=...)` |
 | Headless | `headless.py:run()` | `await boot(self._config, Path(self._config_path), settings_dir=sd)` |
+| Web（控制台发行包） | `web/app.py:lifespan` | `await boot(cfg, _config_path)`，保留自己的组合根 |
+
+> `boot()` 的生产调用点由架构门禁固定（`tests/architecture/test_boot_call_sites.py`）：本仓两处（内核 HTTP 应用与 Headless），控制台 Web 组合根住控制台发行包并保留自己的调用。
 
 ## 内核与控制台边界
 
-> 本仓只承载内核与内置插件；下述控制台（web）实现住控制台发行包，本节保留其边界契约作为内核侧的约束。
+> 内核面 HTTP 路由住本仓 `api/http`（决策见 [ADR-0002](adr/0002-kernel-http-api-ownership.md)）；控制台（Web UI、Insight 反代、Context Bay 领域路由）住控制台发行包，在本仓的路由之上叠加。本节同时保留边界约定作为内核侧的约束。
 
-内核（core / api / session / store / plugin SDK / driver / event / hooks / watchdog / config / headless）可以在不装配控制台的情况下启动和运行：Headless 与 API 模式只经 `boot()` + CoreAPI 完成 Run 的创建、观察、控制与崩溃恢复。headless 验收在干净子进程内覆盖 Run 的完成、失败与崩溃恢复路径，并以 meta-path 导入守卫阻断 `workflow_controller.web` 的任何导入，锁定「没有控制台也能运行内核」的验收结果。
+内核（core / api / session / store / plugin SDK / driver / event / hooks / watchdog / config / headless）可以在不装配控制台的情况下启动和运行：Headless 与 API 模式只经 `boot()` + CoreAPI 完成 Run 的创建、观察、控制与崩溃恢复。headless 验收在干净子进程内覆盖 Run 的完成、失败与崩溃恢复路径，并以 meta-path 导入守卫阻断 `workflow_controller.web` 与 `workflow_controller.api.http` 的任何导入，锁定「没有 HTTP 路由层也能运行内核」的验收结果；内核 CLI 的导入链（含 `--help` 与子命令选项解析）由同一守卫验证不加载这两个包。
 
-控制台（`web/`）是内核的可选客户端与装配方式：`app.py` 只承担组合根（配置、日志、boot、装配调用、关停）；`console.py` 聚合领域路由与插件路由，并挂载 Insight 反代与 SPA；`insight.py` 与 `spa.py` 不依赖内核。路由处理器只通过 CoreAPI 访问内核，不读取 orchestrator。自有 API 统一挂 `/api/v1` 正式路径（旧 `/api` 兼容别名已删除）；Insight 反代路径与插件贡献路由不参与前缀切换。
+### 内核 HTTP 表现（`api/http`）
+
+只依赖 `CoreAPI` 的 HTTP 路由下沉到内核包 `workflow_controller.api.http`，内核仅安装自身即可独立接收控制类请求（`workflow-controller serve`）。判定规则：处理器只需要 `CoreAPI` 的进内核；需要领域包、Insight 或浏览器页面资源的留控制台。
+
+- `app.py`：内核独立应用的组合根。`create_app()` 返回的 FastAPI 应用在 lifespan 里调用 `boot()`、设置 `app.state.api`、挂载插件路由，退出时关停 orchestrator（关停超时 120 秒）。启动输入由 `load_boot_context()` 统一解析：配置读启动目录的 `workflow-controller-config.yaml`，`--settings-dir`、`--hook-port`、`--log-level` 经环境变量传入。控制台复用这些启动输入解析、日志准备、SSE 退出标志复位与关停，但保留自己的组合根与 `boot()` 调用。
+- `mounting.py`：路由域表 `KERNEL_DOMAIN_ROUTES` 是 URL 前缀、Swagger tag 与挂载顺序的单一来源；`register_kernel_routes(app)` 按表挂载 8 个路由域，`register_plugin_routers(app, api)` 经 `CoreAPI.plugin` 枚举已装载插件并挂载其 router，同时安装运行期注册回调 `app.state.register_runtime_plugin_router`（内核应用没有 catch-all，直接追加；控制台换成前插到 catch-all 之前的版本）。入口层不触碰 orchestrator，也不把它放上 `app.state`。
+- `routes/`：`sessions`、`runs`、`auth`、`config`、`plugins`、`overview`、`sse`、`watchdog` 八个路由模块与共用的 `common.py`。路由处理器只通过 `app.state.api` 访问内核；`ConfigSectionProvider` 协议让宿主在装配期注入领域配置段（`GET/PUT /config` 与 SSE `config_update` 共用），内核独立应用没有领域段。
+- `serve.py`：`workflow-controller serve` 的执行体，用 uvicorn 以工厂方式启动内核应用，不启动 Vite 与 Insight；默认绑定 `127.0.0.1:18600`，无鉴权。
+- 约定清单：`packages/kernel/kernel_tests/contract/manifest.yaml` 登记内核面的全部端点（stable / experimental / internal 三分类）、SSE 事件名、告警词表与事件 payload 字段，约定测试要求内核应用的正式路由面与清单完全一致；人读文档 `docs/api-contract.md` 由清单生成。
+
+路由处理器只通过 CoreAPI 访问内核，不读取 orchestrator。自有 API 统一挂 `/api/v1` 正式路径（旧 `/api` 兼容别名已删除）；Insight 反代路径与插件贡献路由不参与前缀切换。
 
 Breather 插件贡献 `/api/breather/state|handoff|cancel`，与 Insight 的 `/api/breather/*` 反代共用前缀。运行时启用的插件路由须插在 Insight 反代之前；禁用时这些专有路径返回明确的禁用状态，不转发给 Insight。插件配置页面可将单文件不超过 10 MiB 的 UTF-8 `.md`/`.txt` 指令上传到守护进程启动目录；文件名只接受纯文件名、允许覆盖同名文件（内置指令下载文件名固定，先下载→编辑→再次上传同名文件必须能落盘），配置仍保存路径字符串。
 
@@ -94,7 +107,7 @@ Workflow Controller 的运行时对象存在必要的双向协作（例如 `sess
 
 | 源包 | 禁止依赖 | 说明 |
 |---|---|---|
-| `web/routes`、`headless` | 除 `api` 外的 `workflow_controller.*` 后端内部包 | 路由只能额外依赖其他 `web/routes` 模块；`web/app.py` 是唯一 Web 组合根 |
+| `api/http/routes`、`headless` | 除 `api` 外的 `workflow_controller.*` 后端内部包 | 内核 HTTP 路由只能额外依赖 `api/http/routes` 同目录模块，不得回导应用工厂与挂载层；`api/http/app.py` 与 `headless.py` 是本仓仅有的两个组合根 |
 | `web/context_bay`（CANN 领域暂存） | 除 `api`、`context_bay_exporter`、`transcript`、包内互引外的 `workflow_controller.*` 后端内部包 | 领域暂存模块；`config.settings` 常量边为符号级登记债务，S2b 清理，门禁盯防回归 |
 | `transcript`（中性转录层） | 一切 `workflow_controller.*` 包（含 `__main__`），只依赖标准库 | 转录源定位与 claude-jsonl / opencode.db 编解码；只做格式翻译，不进控制面 |
 | 内核各包（`api`、`core`、`transcript`、`plugins`、`__main__`、`headless` 等） | `context_bay_exporter`（领域上传包） | CANN 上传面只由 Console/领域组件消费，内核导入链不触及 |
@@ -103,7 +116,7 @@ Workflow Controller 的运行时对象存在必要的双向协作（例如 `sess
 | `plugins.<name>` | 其他 `plugins.<name>` 以及 `core`、`driver`、`store`、`api`、`web` | 内置插件只依赖 SDK、服务端口与公共基础包；宿主私有实现必须通过端口访问 |
 | `driver`、`event`、`hooks`、`store`、`watchdog` | `api`、`web`、具体 `plugins.*` | 底层运行时不得反向进入控制面或领域插件 |
 
-Import Linter 对当前无违规的边界实施零容忍检查：`plugin` SDK 不反向依赖宿主或具体插件，内置插件不依赖兄弟插件，低层运行时不反向进入控制面或领域插件，Console 静态模块不依赖内核，路由不回导组合根，中性转录层零 workflow_controller 依赖，内核各包不导入领域上传包。它检查源码中的直接导入并覆盖各包的子模块；经中立协议、事件或注入端口形成的间接依赖不作为违规。
+Import Linter 对当前无违规的边界实施零容忍检查：`plugin` SDK 不反向依赖宿主或具体插件，内置插件不依赖兄弟插件，低层运行时不反向进入控制面或领域插件，中性转录层零 workflow_controller 依赖，内核各包不导入领域上传包。路由不回导组合根由架构测试的入口层规则实施，Console 静态模块不依赖内核由控制台仓的 Import Linter 检查实施。它检查源码中的直接导入并覆盖各包的子模块；经中立协议、事件或注入端口形成的间接依赖不作为违规。
 
 架构测试覆盖完整矩阵，并显式注册顶层包角色；新增 `src/workflow_controller/<package>` 必须先登记，否则门禁失败。子包继承所属顶层包的角色，不需要单独登记。类型检查专用的纯 `if TYPE_CHECKING:` 或 `if typing.TYPE_CHECKING:` 分支不属于运行时依赖，两个门禁均忽略；但与条件组合的表达式仍按运行时依赖检查。模块边界匹配同时覆盖包本身及其子模块，不能通过把导入移动到 `__init__.py` 绕过。
 
@@ -414,7 +427,7 @@ Events streamed to UI:
   Headless: poll loop → EventAPI.get_since() → stdout JSON
 ```
 
-> **SSE 稳定性硬化**（能耗报告 §八）：`sse_routes.event_stream` 的 `while` 循环内每个 yield 段（增量事件 / 会话 / 流水线 / 用量 / 配置 / auth / handoff / loop）独立 `try/except`，单段异常只 `continue` 跳下一轮、不杀整个连接；`event_store` 所有查询连接 `sqlite3.connect` 处统一 `PRAGMA busy_timeout=5000`，避免多生成器并发读时 WAL checkpoint 立即抛 `database is locked`。前端 `useSSE` 改模块级单例（全局只一条 EventSource，由 `App.vue` 根组件托管生命周期）+ 指数退避重连，根治「断开/重连 toast 死循环」与连接泄漏。服务端 shutdown（uvicorn reload 的 SIGTERM）用 sse-starlette 协作式 shutdown：`EventSourceResponse` 带 `shutdown_event` + `shutdown_grace_period=2`（须小于 uvicorn `timeout_graceful_shutdown=3`），生成器在 `while` 循环头检查 event、break 后发出 `server_reload` farewell 再退出——不能在 `CancelledError` 处理器里补发（任务组已取消，`send` 立即再次被取消，事件到不了浏览器）。
+> **SSE 稳定性硬化**（能耗报告 §八）：`api/http/routes/sse_routes.py` 的 `event_stream` 在 `while` 循环内每个 yield 段（增量事件 / 会话 / 流水线 / 用量 / 配置 / auth / handoff / loop）独立 `try/except`，单段异常只 `continue` 跳下一轮、不杀整个连接；`event_store` 所有查询连接 `sqlite3.connect` 处统一 `PRAGMA busy_timeout=5000`，避免多生成器并发读时 WAL checkpoint 立即抛 `database is locked`。前端 `useSSE` 改模块级单例（全局只一条 EventSource，由 `App.vue` 根组件托管生命周期）+ 指数退避重连，根治「断开/重连 toast 死循环」与连接泄漏。服务端 shutdown（uvicorn reload 的 SIGTERM）用 sse-starlette 协作式 shutdown：`EventSourceResponse` 带 `shutdown_event` + `shutdown_grace_period=2`（须小于 uvicorn `timeout_graceful_shutdown=3`，`web` 与 `serve` 同值），生成器在 `while` 循环头检查 event、break 后发出 `server_reload` farewell 再退出——不能在 `CancelledError` 处理器里补发（任务组已取消，`send` 立即再次被取消，事件到不了浏览器）。
 
 ## Driver 层
 
@@ -529,7 +542,7 @@ from workflow_controller.plugin.sdk import Plugin, PluginTabDef, StopHookResult,
 | 能力 | 方法 | 服务 |
 |---|---|---|
 | aiohttp 路由（CC hooks） | `register_hook_routes(hook_server, routes)` | :默认 18765 |
-| FastAPI 路由（浏览器） | `get_web_router()` | :18600 |
+| FastAPI 路由（浏览器） | `get_web_router()`，由 `api/http/mounting.register_plugin_routers` 挂载 | :18600（控制台 `web` 与内核 `serve` 同端口，二者不同时运行） |
 | Stop-hook 拦截 | `on_stop_hook(session_id, session) → StopHookResult` | — |
 | Iteration-boundary gate | async `on_iteration_boundary(session_id, session, iter) → IterationGateResult` | loop 边界 |
 | Subagent-start 拦截 | `bus.intercept(SUBAGENT_START, handler)`（阻塞冻文件态） | — |
@@ -699,7 +712,7 @@ SUBAGENT_{START,PROGRESS,STOP} 事件 ──> EventBus ──> 三条规则订�
 三条规则各有独立的关闭方式（阈值=0 或字段为空），去重逻辑保证不刷屏。
 （run 级停滞规则挂起未实现。）
 
-告警事件的类型词表与 payload 编解码住 `watchdog/fault.py`（检测与消费共用）。告警历史查询经 `CoreAPI.watchdog`（`api/watchdog_api.py` 门面，直读事件库筛 `fault.*` 并解码，不依赖检测本体）；告警查询路由住控制台侧（经 `CoreAPI.watchdog`），内核 watchdog 包不承载 web 路由。前端实时告警走 SSE 透传的 `fault.*` 事件（按前缀过滤）。
+告警事件的类型词表与 payload 编解码住 `watchdog/fault.py`（检测与消费共用）。告警历史查询经 `CoreAPI.watchdog`（`api/watchdog_api.py` 门面，直读事件库筛 `fault.*` 并解码，不依赖检测本体）；告警查询路由住 `api/http/routes/watchdog_routes.py`（经 `CoreAPI.watchdog`），内核 watchdog 包自身不承载路由。前端实时告警走 SSE 透传的 `fault.*` 事件（按前缀过滤）。
 
 详见 [watchdog 设计文档](watchdog.md)。
 
@@ -855,7 +868,7 @@ orch.shutdown()
 
 ### Insight 启动命令（控制台侧）
 
-命令装配实现住控制台发行包；内核 CLI 只保留 `web` 子命令的选项声明与缺席时的可诊断错误。
+命令装配实现住控制台发行包；内核 CLI 只保留 `web` 子命令的选项声明，并在控制台缺失时给出可诊断错误（此时可改用内核自带的 `workflow-controller serve`）。
 
 `workflow-controller web --insight` 启动 Insight 服务；传入命令时执行指定可执行文件，省略值时执行 PATH 中的 `cannbot-insight` 命令。命令位于 `node_modules/.bin` 时，子进程工作目录改为对应包目录，避免 Next.js 依赖解析失败。子进程环境包含端口和浏览器控制变量；CLI 启动后把 Workflow Controller 端口写入进程环境，Web worker 只以环境端口为准确认服务可用。
 
@@ -872,8 +885,9 @@ axcor/
 │   │   ├── src/workflow_controller/   # api core driver event hooks plugin(SDK) session
 │   │   │                              # store support transcript watchdog config resources
 │   │   │                              # __main__.py headless.py logging_config.py
+│   │   │                              # api/http：内核 HTTP 路由、应用工厂与挂载层
 │   │   ├── kernel_tests/              # 内核测试（unit/integration/transcript/watchdog/
-│   │   │                              # regression/tooling/fixtures）
+│   │   │                              # regression/tooling/fixtures/http/contract）
 │   │   └── pyproject.toml
 │   ├── hookserver/                    # workflow-controller-hookserver（独立子包）
 │   ├── opencode-file-provenance/      # OpenCode 宿主 npm 子包
@@ -885,7 +899,7 @@ axcor/
 └── docs/
 ```
 
-内核各包职责（api/core/…）与单仓布局一致；控制台（Web UI、路由装配、Insight 反代）不在本仓，作为控制台发行包消费内核稳定 API。
+内核各包职责（api/core/…）与单仓布局一致；控制台（Web UI、Insight 反代、Context Bay 领域路由）不在本仓，作为控制台发行包消费内核稳定 API——内核稳定 API 的 HTTP 表现在 `api/http`。
 
 ## File Provenance（V1）
 

@@ -2168,6 +2168,7 @@ dependencies = [
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "sse-starlette" },
     { name = "uvicorn" },
 ]
 
@@ -2209,6 +2210,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<0.16" },
+    { name = "sse-starlette", specifier = ">=3.3" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]

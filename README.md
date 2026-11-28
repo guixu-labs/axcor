@@ -4,12 +4,12 @@ axcor（Agent eXecution Core Orchestration Runtime）是 Workflow Controller 的
 
 | 发行包 | 内容 |
 |---|---|
-| `workflow-controller-kernel` | 内核：headless runner、Run 记账、事件账本、Session 生命周期、预算与门禁强制、插件 SDK、稳定控制 API |
+| `workflow-controller-kernel` | 内核：headless runner、内核 HTTP API（`serve`）、Run 记录、事件存储、Session 生命周期、预算与门禁强制、插件 SDK、稳定控制 API |
 | `workflow-controller-plugin-<name>` | 内置插件：`agent-traceback`（检查点回放）、`breather`（会话交接）、`fake-driver`（headless 验收驱动）、`file-provenance`（文件归因）、`graph`（graph-yaml@1 驱动与 DAG 面板）、`staged-pipeline`（阶段门禁） |
 | `workflow-controller-hookserver` | 独立 Claude Code / opencode hook server |
 | `@workflow-controller/file-provenance`（npm） | OpenCode 宿主的文件归因插件 |
 
-内核可在不装配控制台的情况下启动和运行（Headless / API 模式）；Web 控制台、Insight 反代与领域导出住控制台发行包，只经 `CoreAPI` 与稳定 API 使用内核。
+内核可在不装配控制台的情况下启动和运行（Headless / HTTP API 模式）；Web 控制台、Insight 反代与领域导出住控制台发行包，在内核的 HTTP 路由之上叠加，只经 `CoreAPI` 与稳定 API 使用内核。
 
 ## 快速开始
 
@@ -62,6 +62,15 @@ asyncio.run(main())
 
 运行手册见 [HEADLESS.md](HEADLESS.md)。安装插件即自动发现（entry point + 包内默认 `config.yaml`，用户可写覆盖住 `<用户配置根>/plugins/<name>/config.yaml`）。
 
+只装内核也能经 HTTP 控制 run：`workflow-controller serve` 起常驻服务（不启动 Vite 与 Insight），默认只绑定 `127.0.0.1:18600`，`/docs` 为 Swagger：
+
+```bash
+workflow-controller serve --port 18600 --hook-port 18765
+curl -s http://127.0.0.1:18600/api/v1/health
+```
+
+内核面 HTTP API 与 SSE 事件清单见 [docs/api-contract.md](docs/api-contract.md)，由 `packages/kernel/kernel_tests/contract/manifest.yaml` 生成。
+
 ## 子集导出
 
 按插件清单导出「内核 + 指定插件」的自治子集（拷贝即用，测试随包）：
@@ -87,8 +96,10 @@ examples/  conf/  docs/
 
 ## 文档
 
-- [HEADLESS.md](HEADLESS.md) — headless 运行手册
+- [HEADLESS.md](HEADLESS.md) — headless 运行手册与 `serve` HTTP API 模式
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 架构事实来源
+- [docs/api-contract.md](docs/api-contract.md) — 内核面 HTTP API 与事件约定清单
+- [docs/adr/0002-kernel-http-api-ownership.md](docs/adr/0002-kernel-http-api-ownership.md) — 内核面 HTTP 路由归属决策
 - [docs/event-system.md](docs/event-system.md) — 事件系统
 - [docs/watchdog.md](docs/watchdog.md) — 故障检测
 - [docs/develop-workflows-guide.md](docs/develop-workflows-guide.md) — 工作流开发指南

@@ -45,10 +45,10 @@ def test_cli_help_shows_configured_brand(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    assert "Ascendbot — headless runner + Web UI." in _run_help(monkeypatch)
+    assert "Ascendbot — headless runner + HTTP API + Web UI." in _run_help(monkeypatch)
 
 
 def test_cli_help_defaults_to_default_brand(tmp_path, monkeypatch):
     """无 workflow-controller-config.yaml → 回落默认品牌。"""
     monkeypatch.chdir(tmp_path)
-    assert "Workflow Controller — headless runner + Web UI." in _run_help(monkeypatch)
+    assert "Workflow Controller — headless runner + HTTP API + Web UI." in _run_help(monkeypatch)

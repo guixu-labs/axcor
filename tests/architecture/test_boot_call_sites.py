@@ -12,15 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""生产 boot() 调用点门禁 — 内核组合根只允许 Web 与 Headless 两个入口。"""
+"""生产 boot() 调用点门禁 — 本仓只允许内核 HTTP 应用与 Headless 两个组合根调用。
+
+控制台 Web 组合根住控制台发行包（保留自己的 boot() 调用，见 ADR-0002），
+不在本仓扫描面内。
+"""
 
 from __future__ import annotations
 
 import ast
 
-from tests.architecture.layout import normalized_source_exists, source_roots
+from tests.architecture.layout import source_roots
 
 BOOT_MODULE = "workflow_controller.api.core_api"
+
+# 本仓允许调用 boot() 的生产组合根（归一化 src/... 路径）
+BOOT_CALL_SITES = frozenset(
+    {
+        "src/workflow_controller/api/http/app.py",
+        "src/workflow_controller/headless.py",
+    }
+)
 
 
 def _dotted_name(node: ast.AST | None) -> str | None:
@@ -72,17 +84,9 @@ def test_production_boot_call_sites_are_pinned() -> None:
         for path in sorted(source_root.rglob("*.py")):
             if lines := _boot_call_sites(ast.parse(path.read_text(encoding="utf-8"))):
                 callers["src/" + path.relative_to(source_root).as_posix()] = lines
-    expected = {
-        caller
-        for caller in (
-            "src/workflow_controller/web/app.py",
-            "src/workflow_controller/headless.py",
-        )
-        if normalized_source_exists(caller)
-    }
-    unexpected = set(callers) - expected
-    missing = expected - set(callers)
+    unexpected = set(callers) - BOOT_CALL_SITES
+    missing = BOOT_CALL_SITES - set(callers)
     assert not unexpected and not missing, (
-        f"boot() 生产调用点必须只有 Web/Headless 组合根："
+        f"boot() 生产调用点必须与登记的组合根一致："
         f"新增={sorted(unexpected)}，缺失={sorted(missing)}"
     )

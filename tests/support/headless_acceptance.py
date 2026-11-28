@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""headless 验收：干净解释器内经 boot() 驱动 fake run，全程禁止导入 workflow_controller.web。
+"""headless 验收：干净解释器内经 boot() 驱动 fake run，全程禁止导入 HTTP 表现层。
+
+被禁的是控制台的 ``workflow_controller.web`` 与内核的 ``workflow_controller.api.http``：
+内核只靠进程内的 CoreAPI 就能完成 Run，不依赖任何 HTTP 路由层。
 
 用法：python -m tests.support.headless_acceptance <project_dir> <settings_dir> [scenario]
 scenario：complete（默认）| fail | crash | recover；结果以单行 JSON 打到 stdout，
@@ -50,11 +53,20 @@ RUN_WAIT_TIMEOUT_S = 30.0
 CRASH_EXIT_CODE = 70
 
 
-class WebImportBlocker(importlib.abc.MetaPathFinder):
-    """meta-path 守卫：workflow_controller.web 的导入尝试当场失败。"""
+_HTTP_ENTRY_PACKAGES = ("workflow_controller.web", "workflow_controller.api.http")
+
+
+class HttpLayerImportBlocker(importlib.abc.MetaPathFinder):
+    """meta-path 守卫：控制台 web 与内核 HTTP 表现层的导入尝试当场失败。
+
+    hook server（aiohttp）不在其列——它是数据面，headless 的插件装载依赖它。
+    """
 
     def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> None:
-        if fullname == "workflow_controller.web" or fullname.startswith("workflow_controller.web."):
+        if any(
+            fullname == package or fullname.startswith(f"{package}.")
+            for package in _HTTP_ENTRY_PACKAGES
+        ):
             raise ImportError(f"headless 验收禁止导入 {fullname}")
         return None
 
@@ -255,7 +267,7 @@ def main(argv: list[str]) -> int:
     settings_dir.mkdir(parents=True, exist_ok=True)
     # boot() 以 cwd 为存储锚点，先落位再装导入守卫
     os.chdir(project_dir)
-    sys.meta_path.insert(0, WebImportBlocker())
+    sys.meta_path.insert(0, HttpLayerImportBlocker())
     try:
         result = asyncio.run(SCENARIOS[scenario_name](project_dir, settings_dir))
     except _CrashExitError as exc:

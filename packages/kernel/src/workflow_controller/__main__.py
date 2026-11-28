@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Workflow Controller CLI — Headless runner + Web UI."""
+"""Workflow Controller CLI — Headless runner、内核 HTTP API 与 Web UI。"""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _load_app_config(config_path: str) -> AppConfig:
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """Workflow Controller — headless runner + Web UI."""
+    """Workflow Controller — headless runner + HTTP API + Web UI."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -241,9 +241,48 @@ def cmd_web(
         raise click.ClickException(
             "Web UI is not available in this kernel-only install: "
             "workflow_controller.web is missing. Install the full workflow-controller "
-            "package, or use `workflow-controller run` for headless mode."
+            "package, or use `workflow-controller serve` for the kernel HTTP API "
+            "or `workflow-controller run` for headless mode."
         ) from exc
     run_web_command(ctx, port, host, no_open, dev, insight, insight_port, settings_dir, log_level)
+
+
+@cli.command("serve")
+@click.option("--port", default=18600, type=int, help="HTTP API port")
+@click.option("--host", default="127.0.0.1", help="Bind address")
+@click.option(
+    "--hook-port",
+    type=click.IntRange(min=1, max=65535),
+    default=None,
+    help="Hook server port (default: 18765)",
+)
+@click.option(
+    "--settings-dir",
+    default=None,
+    help="Dir with settings.conf + auth_state.json (default: ~/.config/workflow-controller/)",
+)
+@click.option(
+    "--log-level",
+    default=None,
+    help="Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)",
+)
+def cmd_serve(
+    port: int,
+    host: str,
+    hook_port: int | None,
+    settings_dir: str | None,
+    log_level: str | None,
+) -> None:
+    """Serve the kernel HTTP API (/api/v1, /docs) — no Web UI."""
+    if hook_port is None:
+        os.environ.pop("WORKFLOW_CONTROLLER_HOOK_PORT", None)
+    else:
+        os.environ["WORKFLOW_CONTROLLER_HOOK_PORT"] = str(hook_port)
+
+    # HTTP 表现住 api/http 子包，函数内懒装配保持内核 CLI 导入链干净
+    from workflow_controller.api.http.serve import run_serve_command
+
+    run_serve_command(port, host, settings_dir, log_level)
 
 
 def main() -> int:
@@ -255,7 +294,7 @@ def main() -> int:
         brand = _load_app_config("workflow-controller-config.yaml").brand_name.strip()
     except Exception:
         brand = ""
-    cli.help = f"{brand or DEFAULT_BRAND_NAME} — headless runner + Web UI."
+    cli.help = f"{brand or DEFAULT_BRAND_NAME} — headless runner + HTTP API + Web UI."
     cli()
     return 0
 

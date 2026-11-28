@@ -21,8 +21,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-import pytest
-
 from tests.architecture.boundaries import (
     BoundaryOccurrence,
     format_boundary_diagnostics,
@@ -32,10 +30,10 @@ from tests.architecture.boundary_debt import BOUNDARY_DEBT
 from tests.architecture.layout import (
     ROOT,
     builtin_plugin_py_files,
+    http_routes_root,
     kernel_package_root,
     normalized_source_exists,
     scan_boundaries_normalized,
-    web_routes_root,
 )
 
 # 路由层禁触的内核私有符号（含字符串形态，如 getattr(orch, "_hook_server")）
@@ -66,34 +64,9 @@ def test_boundary_accesses_match_exact_debt_baseline() -> None:
     assert actual == expected, format_boundary_diagnostics(occurrences, expected)
 
 
-def test_web_routes_orchestrator_access_matches_registered_debt() -> None:
-    """routes 内 orchestrator 访问（属性链与 getattr 字符串形态）只允许已登记债务。"""
-    routes_root = web_routes_root()
-    if routes_root is None:
-        pytest.skip("web 路由不在本仓")
-    actual = Counter(
-        item.source
-        for item in scan_boundaries(routes_root, ROOT)
-        if item.rule == "web-no-state-orchestrator"
-    )
-    expected_debt: dict[str, int] = {}
-    for debt in BOUNDARY_DEBT:
-        if debt.rule == "web-no-state-orchestrator" and debt.source.startswith(
-            "src/workflow_controller/web/routes/"
-        ):
-            expected_debt[debt.source] = debt.expected
-    expected = Counter(expected_debt)
-    assert actual == expected, (
-        f"routes 的 orchestrator 访问须与登记债务一致: actual={dict(actual)}, "
-        f"expected={dict(expected)}"
-    )
-
-
-def test_web_routes_never_touch_kernel_private_symbols() -> None:
-    """路由层不得触碰内核私有符号，只能经 CoreAPI 访问内核。"""
-    routes_root = web_routes_root()
-    if routes_root is None:
-        pytest.skip("web 路由不在本仓")
+def test_http_routes_never_touch_kernel_private_symbols() -> None:
+    """内核 HTTP 路由不得触碰内核私有符号，只能经 CoreAPI 访问内核。"""
+    routes_root = http_routes_root()
     offenders: list[str] = []
     for path in sorted(routes_root.glob("*.py")):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

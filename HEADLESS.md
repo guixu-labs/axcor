@@ -82,7 +82,7 @@ Options:
   --help                    Show this message and exit.
 ```
 
-> `workflow-controller run` 默认即 headless（所有输出为 JSON lines）；交互式 UI 请用 `workflow-controller web`（需另装控制台发行包，内核-only 安装时该子命令给出可诊断错误）。
+> `workflow-controller run` 默认即 headless（所有输出为 JSON lines）；交互式 UI 请用 `workflow-controller web`（需另装控制台发行包，内核-only 安装时该子命令给出可诊断错误）；只需要 HTTP 接口时用内核自带的 `workflow-controller serve`（见下文「HTTP API 模式」）。
 
 ## 认证配置
 
@@ -139,9 +139,35 @@ workflow-controller run \
 | `interrupted` | 用户 Ctrl+C |
 | `done` | 全部完成 |
 
+## HTTP API 模式：`workflow-controller serve`
+
+需要常驻 HTTP 接口而不需要 Web UI 时，用内核自带的 `serve`：仅安装内核包即可用，不启动 Vite 与 Insight。
+
+```bash
+# 默认 127.0.0.1:18600；hook server 端口默认 18765
+workflow-controller serve
+
+# 指定端口、设置目录与日志级别
+workflow-controller serve --port 18700 --hook-port 18775 \
+  --settings-dir ~/.config/workflow-controller --log-level DEBUG
+```
+
+启动后 `GET /api/v1/health` 返回 200，`/docs` 为 Swagger，`/api/v1` 提供与 Web 控制台相同的内核面端点（清单见 [docs/api-contract.md](docs/api-contract.md)）：
+
+```bash
+curl -s http://127.0.0.1:18600/api/v1/health
+curl -s -X POST http://127.0.0.1:18600/api/v1/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"format": "fake@1", "program_path": "/abs/path/fake-program.yaml", "work_dir": "/abs/path/work"}'
+```
+
+- 配置读启动目录的 `workflow-controller-config.yaml`，与 `web` 子命令同一份。
+- 默认只绑定回环地址且没有鉴权；绑定到其他地址之前先加访问控制。
+- hook server 端口被占用时以退出码 3 退出，并在标准错误报告监听地址与系统错误。
+
 ## 注意事项
 
 - **headless 模式下 reviewer 自动设为 `auto`**：reviewer 自动执行，不需要手动交互
-- **`workflow-controller run` 始终为 headless**：所有输出为 JSON lines；交互式 UI 请用 `workflow-controller web`（需另装控制台发行包）
+- **`workflow-controller run` 始终为 headless**：所有输出为 JSON lines；交互式 UI 请用 `workflow-controller web`（需另装控制台发行包），只要 HTTP 接口用 `workflow-controller serve`
 - **日志文件**：仍写入项目 `.workflow-controller/` 目录下的日志文件
 - **auth_state.json**：自动创建和维护，记录 provider 轮转状态

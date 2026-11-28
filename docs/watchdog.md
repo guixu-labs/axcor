@@ -57,11 +57,11 @@ opencode 的 poller 是独立 task，subagent stop 后 poller 可能还在推最
 | `src/workflow_controller/watchdog/fault.py` | `fault.*` 告警事件编解码（类型词表 + payload 解码，检测与消费共用） |
 | `src/workflow_controller/watchdog/core.py` | 规则订阅者（三条检测规则）+ WatchdogCore 组合根 |
 | `src/workflow_controller/api/watchdog_api.py` | WatchdogAPI：告警查询公开门面（`CoreAPI.watchdog`，直读事件库） |
-| `web/routes/watchdog_routes.py`（控制台侧） | web 端点：`GET /api/v1/sessions/{id}/watchdog/alerts` 查历史告警 |
+| `src/workflow_controller/api/http/routes/watchdog_routes.py` | HTTP 端点：`GET /api/v1/sessions/{id}/watchdog/alerts` 查历史告警 |
 | `src/workflow_controller/config/settings.py` | `WatchdogConfig`（在 AppConfig 上） |
 | `src/workflow_controller/api/config_api.py` | `get_config_dict` / `update_config` 暴露 watchdog 字段 |
 | `src/workflow_controller/core/orchestrator.py` | `__init__` 构造 `self.watchdog`，`start()` 里接入事件总线 |
-| 控制台路由聚合（控制台侧） | 领域路由统一注册（含告警查询路由） |
+| `src/workflow_controller/api/http/mounting.py` | 内核路由域表与挂载（含告警查询路由） |
 
 ### 3.2 数据结构（state.py）
 
@@ -149,7 +149,7 @@ _check_timeout(rec, now)
 3. session 删除时 `delete_session` 清掉该 session 的所有 events（包括告警）
 
 **历史告警查询**：`GET /api/v1/sessions/{session_id}/watchdog/alerts`
-- 路由住控制台侧，处理器经 `CoreAPI.watchdog.list_alerts` 查询，不触碰内核内部对象
+- 路由住 `src/workflow_controller/api/http/routes/watchdog_routes.py`，处理器经 `CoreAPI.watchdog.list_alerts` 查询，不触碰内核内部对象
 - `WatchdogAPI` 直读事件库（`get_events_sync`）筛 `fault.*` 事件并解码，不依赖检测本体与内存态
 - session 已结束、进程重启、watchdog 被禁用——照样能查到历史告警
 
