@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,6 +68,7 @@ class HookConfigGenerator:
         self.write_settings_to_file(project_dir / ".claude" / "settings.json")
 
     def write_settings_to_file(self, settings_file: Path) -> None:
+        """按事件合并写入：只替换 controller 自己的旧条目，保留项目原有的 hook。"""
         settings = self.generate_settings()
         settings_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -74,5 +76,37 @@ class HookConfigGenerator:
         if settings_file.exists():
             existing = json.loads(settings_file.read_text())
 
-        existing["hooks"] = settings["hooks"]
+        managed_paths = _managed_hook_paths(settings["hooks"])
+        hooks = existing.get("hooks")
+        if not isinstance(hooks, dict):
+            hooks = {}
+        for event, generated in settings["hooks"].items():
+            old = hooks.get(event)
+            if not isinstance(old, list):
+                old = []
+            hooks[event] = [g for g in old if not _is_managed(g, managed_paths)] + generated
+        existing["hooks"] = hooks
         settings_file.write_text(json.dumps(existing, indent=2))
+
+
+def _managed_hook_paths(hooks: dict[str, Any]) -> frozenset[str]:
+    """取 controller 生成的 HTTP hook 端点路径，作为认领旧条目的依据。"""
+    return frozenset(
+        urlsplit(hook["url"]).path
+        for groups in hooks.values()
+        for group in groups
+        for hook in group["hooks"]
+    )
+
+
+def _is_managed(group: Any, managed_paths: frozenset[str]) -> bool:
+    """判断事件下的 matcher 条目是否全部由 controller 的 HTTP hook 组成。"""
+    hooks = group.get("hooks") if isinstance(group, dict) else None
+    if not isinstance(hooks, list) or not hooks:
+        return False
+    return all(
+        isinstance(hook, dict)
+        and hook.get("type") == "http"
+        and urlsplit(str(hook.get("url", ""))).path in managed_paths
+        for hook in hooks
+    )

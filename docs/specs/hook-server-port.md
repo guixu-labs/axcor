@@ -62,6 +62,9 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 1. Claude CLI session 激活前刷新 `.claude/settings.json`。
 2. 刷新时使用 `effective_hook_port`。
 3. Hook Server 不可用时拒绝激活，避免旧 session 访问漂移端口。
+4. 刷新按事件合并，不整段覆盖 `hooks`：只替换 controller 自己的条目（`type` 为 `http` 且 URL
+   路径为 `/hooks/<event>` 端点之一的 matcher 条目，含端口过期的旧条目），保留项目原有的
+   其他 hook 条目与事件；`hooks` 以外的顶层键照旧保留。
 
 ### Codex CLI
 
@@ -100,7 +103,7 @@ Hook Server 端口不再属于 YAML 配置。`workflow-controller-config.yaml` �
 6. 在 UI 中保存全局配置时，不生成或修改 `hook_server.port`。
 7. `workflow-controller web --help` 能明确区分 Web UI 端口与 Hook Server 端口。
 8. `workflow-controller codex-hook --help` 不与 Hook Server 端口参数混淆。
-9. Claude CLI 激活前，`.claude/settings.json` 中的 hook URL 端口与 Hook Server 实际监听端口一致。
+9. Claude CLI 激活前，`.claude/settings.json` 中 controller 写入的 hook URL 端口与 Hook Server 实际监听端口一致；项目原有的非 controller hook 条目保持不变。
 10. Codex CLI 子进程的 `WORKFLOW_CONTROLLER_HOOK_SERVER_URL` 来自
     `DriverHooks.hook_server_base_url`；测试断言该 URL 与 Hook Server 实际监听端口一致。
 11. 相关单元测试与集成测试全部通过。

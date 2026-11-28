@@ -141,7 +141,18 @@ class TestOrchestrator:
             json.dumps(
                 {
                     "permissions": {"allow": ["Bash(*)"]},
-                    "hooks": {"Stop": [{"hooks": [{"url": "http://localhost:18701/hooks/stop"}]}]},
+                    "hooks": {
+                        "Stop": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "http",
+                                        "url": "http://localhost:18701/hooks/stop",
+                                    }
+                                ]
+                            }
+                        ]
+                    },
                 }
             ),
             encoding="utf-8",
