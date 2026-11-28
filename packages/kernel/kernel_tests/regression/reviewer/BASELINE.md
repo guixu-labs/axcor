@@ -87,7 +87,7 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，
    只验 fixture 结构 + 驱动逻辑）；改了 prompt 则加 `--live` 跑真实 LLM。
 
-> **CI 钉死的节点 ID**：`.github/workflows/live-llm.yml` 固定选择
+> `.github/workflows/live-llm.yml` 固定选择
 > `test_reviewer_replay[13_...]` 和 `test_reviewer_replay[14_...]` 两个节点 ID。
 > 若对 fixture 13 / 14 重命名或重新编号，须同步更新该选择列表，否则 CI 会
 > no tests collected（pytest 退出码 4 / 5）直接红掉。同理，其他 fixture 新增
