@@ -24,8 +24,17 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}
         run: |
           : "${BASE_SHA:?Missing base SHA}" "${HEAD_SHA:?Missing head SHA}"
+          zero_sha=0000000000000000000000000000000000000000
+          if [[ "$BASE_SHA" == "$zero_sha" || "$HEAD_SHA" == "$zero_sha" ]]; then
+            echo "::error::base/head SHA 为全零（如新建分支推送），无法确定词检范围。请在已有 base/head 的提交上运行，或改用 pull_request / merge_group 事件。"
+            exit 1
+          fi
           if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-            git fetch --no-tags origin "$BASE_SHA"
+            if ! git fetch --no-tags origin "$BASE_SHA" 2>"$RUNNER_TEMP/fetch-base.log"; then
+              cat "$RUNNER_TEMP/fetch-base.log" >&2
+              echo "::error::无法获取 base 提交 $BASE_SHA （可能已被 force push 淘汰而不可达），无法执行词检。请确认该提交仍可达后重试。"
+              exit 1
+            fi
           fi
           python scripts/check_ai_words.py --pr "$BASE_SHA" "$HEAD_SHA"
 
