@@ -14,7 +14,7 @@
 
 [project]
 name = "axcor"
-version = "0.2.1"
+version = "0.2.2"
 description = "Workflow Controller 内核与内置插件的 uv workspace 仓"
 requires-python = ">=3.12"
 dependencies = [
