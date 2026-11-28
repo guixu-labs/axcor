@@ -302,7 +302,7 @@ class SessionInfo:
     # 会话自身 reviewer 开关（None=未配置，回落全局 config.reviewer.enabled）。
     # 前端输入门控/回复模式按钮据此按会话区分，而非一律套全局配置。
     reviewer_enabled: bool | None = None
-    # 会话启动时冻结的 reviewer 任务目标；None=旧快照缺字段。
+    # 会话当前生效的 reviewer 任务目标（启动时取自项目配置，会话内可更新）；None=旧快照缺字段。
     reviewer_task_goal: str | None = None
     provider_index: int | None = None
     reviewer_provider_index: int | None = None
@@ -778,6 +778,10 @@ class SessionAPI:
 
     async def set_session_reviewer_mode(self, session_id: str, mode: str) -> None:
         await self._orch.set_session_reviewer_mode(session_id, mode)
+
+    async def set_session_reviewer_task_goal(self, session_id: str, task_goal: str) -> str:
+        """更新会话当前生效的 reviewer 任务目标，返回保存后的值。"""
+        return await self._orch.set_session_reviewer_task_goal(session_id, task_goal)
 
     async def restart(self, session_id: str) -> None:
         await self._assert_session_writable(session_id)

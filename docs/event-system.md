@@ -54,7 +54,7 @@ class Event:
 | | `"gate_question"` | opencode per-query MCP gate 触发的问答 | orchestrator（`_resolve_gate_question`） | reviewer 拦截器（auto→reviewer AUQ / manual→人工队列），inline 返回 InterceptResult |
 | | `"session_complete"` | session loop 跑完（`loop_status=no`+完成 stop_reason）| orchestrator（loop 回调）| 插件 `bus.observe("session_complete", ...)`（fire-and-forget，终态快照/清理）|
 | | `"session_delete"` | session 被删除（核心表清完之后）| orchestrator（`SessionAPI.delete`）| 插件 `bus.intercept("session_delete", ...)`（**inline 拦截器**，sync 清理如 rmtree fork_root）|
-| **系统日志** | `LOG_AUTO` | orchestrator 自动审计（session 启停、hook 决策）| orchestrator | 前端展示 |
+| **系统日志** | `LOG_AUTO` | orchestrator 自动审计（session 启停、hook 决策、reviewer 目标更新）| orchestrator | 前端展示 |
 | | `LOG_QUERY` | loop prompt 渲染 | loop engine | 前端展示 |
 | | `LOG_EVAL` | evaluator 结果 | loop engine | 前端展示 |
 | | `LOG_LOOP` | loop 决策（stop/block/continue）| loop engine（10 处）| 前端展示 |
@@ -411,6 +411,7 @@ opencode 的 task 工具在一个已完成 tool_use 事件里（call + result �
 | subagent progress | `SUBAGENT_PROGRESS` | 889 |
 | subagent stop | `SUBAGENT_STOP` | 917 |
 | hook 决策审计 | `LOG_AUTO` | 1865（11 个调用点）|
+| reviewer 任务目标更新 | `LOG_AUTO`（`action=reviewer_task_goal_updated`，含前后值；时间线不展示）| 1045 |
 
 `SubagentTracker.on_start` / `on_progress` / `on_stop` 是 driver hooks 的接收端——driver（opencode 或 claude_sdk/cli）通过 `DriverHooks` 回调这些方法，它们再 `bus.emit` 发对应类型的 SUBAGENT_* 事件。
 

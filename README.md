@@ -93,6 +93,7 @@ examples/  conf/  docs/
 - [docs/watchdog.md](docs/watchdog.md) — 故障检测
 - [docs/develop-workflows-guide.md](docs/develop-workflows-guide.md) — 工作流开发指南
 - [docs/specs/hook-server-port.md](docs/specs/hook-server-port.md) — Hook Server 端口 CLI 设计
+- [docs/specs/reviewer-task-goal-live-update.md](docs/specs/reviewer-task-goal-live-update.md) — Reviewer 任务目标会话内更新设计
 - [docs/release-process.md](docs/release-process.md) — 发布流程与版本策略
 - [docs/opencode-file-provenance.md](docs/opencode-file-provenance.md) — OpenCode 文件归因指南
 

@@ -358,7 +358,7 @@ class RunRecord:
 3. 激活唯一入口——一切运行时 session 经 `_activate_session`（锁内：幂等/冲突复查/记账钩子/激活回执）；
 4. 终态事件完备——五类终态路径各有 SessionOutcome；引擎旁路与编排/插件层的直写终态一律在直写现场补发 session_outcome，旁路清零；
 5. 三字段推断退役——`state+stop_reason+pause_requested` 组合推断由 SessionOutcome 替代；
-6. reviewer 快照语义——None=disabled（核心不给默认值）；ghost 恢复重建快照；
+6. reviewer 快照语义——None=disabled（核心不给默认值）；ghost 恢复重建快照；`task_goal` 可经 `set_session_reviewer_task_goal` 会话内更新（与 `criteria.task_goal` 同写、在跑 reviewer 即时生效、不按会话状态设限，见 [设计](specs/reviewer-task-goal-live-update.md)）；
 7. 钩子最小面——对 RunCoordinator 只暴露三个钩子位 + 原语，不暴露 pool/loop 内部；
 8. native 路由权威源——hook 事件路由按 `run_sessions.native_session_id` 列优先；
 9. 等人口径不变——manual 队列/gate_question/NL 启发式三路径行为不动；

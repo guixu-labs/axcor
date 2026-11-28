@@ -222,6 +222,24 @@ def _build_reviewer_runtime_config(
     )
 
 
+def _build_reviewer_task_goal_updated_event(
+    session_id: str,
+    previous_task_goal: str,
+    task_goal: str,
+) -> Event:
+    """reviewer 任务目标更新的审计事件，记录前后值。"""
+    return Event.create(
+        session_id=session_id,
+        iteration=0,
+        event_type=EventType.LOG_AUTO,
+        data={
+            "action": "reviewer_task_goal_updated",
+            "previous_task_goal": previous_task_goal,
+            "task_goal": task_goal,
+        },
+    )
+
+
 def _build_stop_requested_event(
     mig_session_id: str,
     final_text: str,

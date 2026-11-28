@@ -23,8 +23,8 @@ system_prompt / L2 第一条 user message）重新决定派 X、派 Y、派 Z、
 配置式重放原则（详见 ``agent-traceback-replay-config-dialog-design.md``）：
 1. **文件态 / L2 / 检查点链忠实继承**——worker 看到的「检查点时刻」与 origin 一致；
 2. **driver 层配置改为用户当前选择**——``overrides`` 覆盖 origin 继承的 model /
-   system_prompt / loop.evaluator / loop.max_iterations / criteria.task_goal /
-   initial_prompt；reviewer.model 由前端经 ``PUT /api/config`` 单独改（进程级服务）。
+   system_prompt / loop.evaluator / loop.max_iterations / reviewer_task_goal（criteria 与
+   reviewer 快照两处）/ initial_prompt；reviewer.model 由前端经 ``PUT /api/config`` 单独改（进程级服务）。
    **无 overrides 时行为等价旧的透明重放**（向后兼容）；
 3. 首轮 prompt 默认通用「请继续你之前的工作。」——与正常 pause→resume 等价，不注入任何
    重放语义；用户可通过 ``overrides.initial_prompt`` 改写；
@@ -241,8 +241,12 @@ def _apply_overrides(base_config: SessionConfig, overrides: dict[str, Any] | Non
         base_config.loop.evaluator = str(ev)
     max_iter_overridden = _apply_max_iterations_override(base_config, ov)
     if (rtg := ov.get("reviewer_task_goal")) is not None and str(rtg) != "":
-        # reviewer_task_goal 是 per-session 字段（feedback evaluator 据此判完成）。
-        base_config.criteria = {**(base_config.criteria or {}), "task_goal": str(rtg)}
+        # reviewer_task_goal 两处落点同写：criteria 供 feedback evaluator 判完成，
+        # reviewer 快照供评审 prompt；快照为 None 时留给激活按 criteria 补建。
+        goal = str(rtg)
+        base_config.criteria = {**(base_config.criteria or {}), "task_goal": goal}
+        if base_config.reviewer is not None:
+            base_config.reviewer.task_goal = goal
     return max_iter_overridden
 
 

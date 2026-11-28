@@ -592,6 +592,21 @@ def _orch_for_delete(cwd: str, stages: list) -> tuple[MagicMock, MagicMock, Magi
     return orch, pool, er
 
 
+async def test_reviewer_task_goal_update_bypasses_workflow_member_guard():
+    """reviewer 任务目标更新不套用 workflow 成员的写者守卫，原样转调 orchestrator。"""
+    orch = MagicMock()
+    orch.affiliation.resolve.return_value = MagicMock(run_id="workflow-1")
+    orch.run_store.get = AsyncMock(return_value=MagicMock(kind=RunKind.WORKFLOW))
+    orch.set_session_reviewer_task_goal = AsyncMock(return_value="新目标")
+    api = SessionAPI(orch)
+
+    with pytest.raises(WorkflowSessionOperationError, match="workflow-1"):
+        await api.pause("s1")
+    assert await api.set_session_reviewer_task_goal("s1", " 新目标 ") == "新目标"
+
+    orch.set_session_reviewer_task_goal.assert_awaited_once_with("s1", " 新目标 ")
+
+
 async def test_delete_rejects_workflow_member_before_cleanup(tmp_path):
     """拒绝删除时保留会话、事件和阶段产物。"""
     artifact = tmp_path / "spec.md"
