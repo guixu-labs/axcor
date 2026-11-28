@@ -15,12 +15,25 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import pytest
 
 from workflow_controller.hooks.hook_config import HookConfigGenerator
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# 与 AscendBot harness 同形的 command hook 条目
+COMMAND_HOOK = {
+    "hooks": [
+        {
+            "type": "command",
+            "command": 'bash "$CLAUDE_PROJECT_DIR"/.claude/hooks/day0-wake-check.sh',
+            "timeout": 10,
+        }
+    ]
+}
 
 
 class TestWriteSettings:
@@ -38,7 +51,7 @@ class TestWriteSettings:
         assert "PreToolUse" in data["hooks"]
 
     @staticmethod
-    def test_write_settings_preserves_existing_non_hook_keys(
+    def test_write_settings_preserves_non_hook_keys_and_unmanaged_events(
         tmp_path: Path,
     ) -> None:
         claude_dir = tmp_path / ".claude"
@@ -48,7 +61,7 @@ class TestWriteSettings:
             json.dumps(
                 {
                     "permissions": {"allow": ["Bash(*)"]},
-                    "hooks": {"old": "should-be-replaced"},
+                    "hooks": {"StopFailure": [COMMAND_HOOK]},
                 }
             )
         )
@@ -58,7 +71,7 @@ class TestWriteSettings:
 
         data = json.loads(settings_file.read_text())
         assert data["permissions"] == {"allow": ["Bash(*)"]}
-        assert data["hooks"] != {"old": "should-be-replaced"}
+        assert data["hooks"]["StopFailure"] == [COMMAND_HOOK]
         assert "PreToolUse" in data["hooks"]
 
 
@@ -107,6 +120,104 @@ class TestWriteSettingsToFile:
         data = json.loads(target.read_text())
         assert data["permissions"] == {"allow": ["x"]}
         assert "PreToolUse" in data["hooks"]
+
+    @staticmethod
+    def test_keeps_existing_command_hooks_under_managed_events(tmp_path: Path) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        target.write_text(json.dumps({"hooks": {"Stop": [COMMAND_HOOK]}}))
+
+        gen = HookConfigGenerator()
+        gen.write_settings_to_file(target)
+
+        hooks = json.loads(target.read_text())["hooks"]
+        assert hooks["Stop"] == [COMMAND_HOOK, *gen.generate_settings()["hooks"]["Stop"]]
+
+    @staticmethod
+    def test_replaces_stale_controller_hooks(tmp_path: Path) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        HookConfigGenerator(port=18999).write_settings_to_file(target)
+
+        gen = HookConfigGenerator(port=18765)
+        gen.write_settings_to_file(target)
+
+        assert json.loads(target.read_text()) == gen.generate_settings()
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://hooks.example.com/hooks/stop",
+            "http://10.0.0.8:18765/hooks/stop",
+            "https://localhost:18765/hooks/stop",
+        ],
+        ids=["remote-https", "remote-http", "loopback-https"],
+    )
+    def test_keeps_http_hooks_controller_could_not_have_written(tmp_path: Path, url: str) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        foreign = {"hooks": [{"type": "http", "url": url}]}
+        target.write_text(json.dumps({"hooks": {"Stop": [foreign]}}))
+
+        gen = HookConfigGenerator()
+        gen.write_settings_to_file(target)
+
+        hooks = json.loads(target.read_text())["hooks"]
+        assert hooks["Stop"] == [foreign, *gen.generate_settings()["hooks"]["Stop"]]
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        ("host", "stale_url"),
+        [
+            ("127.0.0.1", "http://localhost:18999/hooks/stop"),
+            ("127.0.0.1", "http://[::1]:18999/hooks/stop"),
+            ("10.0.0.5", "http://10.0.0.5:18999/hooks/stop"),
+        ],
+        ids=["localhost", "ipv6-loopback", "configured-host"],
+    )
+    def test_replaces_stale_hooks_on_loopback_or_configured_host(
+        tmp_path: Path, host: str, stale_url: str
+    ) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        stale = {"hooks": [{"type": "http", "url": stale_url}]}
+        target.write_text(json.dumps({"hooks": {"Stop": [stale]}}))
+
+        gen = HookConfigGenerator(host=host)
+        gen.write_settings_to_file(target)
+
+        assert json.loads(target.read_text()) == gen.generate_settings()
+
+    @staticmethod
+    def test_repeated_write_leaves_file_unchanged(tmp_path: Path) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        target.write_text(json.dumps({"hooks": {"Stop": [COMMAND_HOOK]}}))
+        gen = HookConfigGenerator()
+        gen.write_settings_to_file(target)
+        first = target.read_text()
+
+        gen.write_settings_to_file(target)
+
+        assert target.read_text() == first
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        "malformed_hooks",
+        [None, {"Stop": None}],
+        ids=["hooks-not-object", "event-not-array"],
+    )
+    def test_replaces_malformed_hooks(tmp_path: Path, malformed_hooks: Any) -> None:
+        target = tmp_path / ".claude" / "settings.json"
+        target.parent.mkdir()
+        target.write_text(json.dumps({"permissions": {"allow": ["x"]}, "hooks": malformed_hooks}))
+
+        gen = HookConfigGenerator()
+        gen.write_settings_to_file(target)
+
+        data = json.loads(target.read_text())
+        assert data["permissions"] == {"allow": ["x"]}
+        assert data["hooks"] == gen.generate_settings()["hooks"]
 
     @staticmethod
     def test_emitted_hook_timeout_is_5_minutes(tmp_path: Path) -> None:
