@@ -87,8 +87,7 @@ reviewer 走 `AnthropicHttpDriver`（裸 HTTP 单次调用、temp=0、无 agent 
 4. 跑 `.venv/bin/pytest tests/regression/reviewer/test_reviewer_replay.py -q`（非实时，
    只验 fixture 结构 + 驱动逻辑）；改了 prompt 则加 `--live` 跑真实 LLM。
 
-> `.github/workflows/live-llm.yml` 按 pytest 节点 ID 选择 fixture 13。
-> 若对 fixture 13 重命名或重新编号，须同步更新工作流里的节点 ID。
+> `.github/workflows/live-llm.yml` 按 pytest 节点 ID 选择 fixture 13。若对 fixture 13 重命名或重新编号，须同步更新工作流里的节点 ID。
 
 ## CI 并行配置
 
