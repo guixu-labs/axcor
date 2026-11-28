@@ -127,6 +127,10 @@ class ReviewerService:
     async def stop(self) -> None:
         """No-op tear-down (was needed when async tasks were tracked)."""
 
+    def set_task_goal(self, task_goal: str) -> None:
+        """改写后续评审使用的任务目标；进行中的评审不受影响。"""
+        self._config.task_goal = task_goal
+
     async def decide_stop(self, context: str) -> HookDecision:
         """Decide whether to let worker exit, called from Stop hook handler.
 

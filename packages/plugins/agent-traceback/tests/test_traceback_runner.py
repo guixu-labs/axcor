@@ -36,6 +36,7 @@ from workflow_controller.config.settings import (
     AppConfig,
     HookServerConfig,
     SessionConfig,
+    SessionReviewerConfig,
 )
 from workflow_controller.config.settings import (
     ReviewerConfig as _ReviewerConfig,
@@ -1359,9 +1360,13 @@ class TestConfigReplayOverrides:
         # NOT origin(20) + buffer(10) = 30；用用户值 5（不加 buffer）
         assert new_session.config.loop.max_iterations == 5
 
-    async def test_overrides_reviewer_task_goal_into_criteria(self, orch, tmp_path, monkeypatch):
-        # reviewer_task_goal 落到 SessionConfig.criteria["task_goal"]，覆盖 origin 继承值。
+    async def test_overrides_reviewer_task_goal_rewrites_criteria_and_reviewer_snapshot(
+        self, orch, tmp_path, monkeypatch
+    ):
+        # reviewer_task_goal 两处落点同写：criteria 给 feedback evaluator，reviewer 快照给评审 prompt。
+        # origin 自带快照时深拷贝会带来旧目标，覆盖必须一并改写快照。
         origin, cp, runner = await _replay_runner(orch, tmp_path, monkeypatch)
+        origin.config.reviewer = SessionReviewerConfig(enabled=True, task_goal="ORIGIN GOAL")
         result = await runner.run(
             origin.id,
             cp.checkpoint_id,
@@ -1371,6 +1376,10 @@ class TestConfigReplayOverrides:
         assert result["ok"] is True
         new_session = orch.pool.get(result["session_id"])
         assert new_session.config.criteria.get("task_goal") == "完成 A/B/C 三阶段"
+        assert new_session.config.reviewer.task_goal == "完成 A/B/C 三阶段"
+        await orch.ensure_reviewer_snapshot(new_session.id)
+        runtime = getattr(orch.reviewer_for(new_session.id), "_config")
+        assert runtime.task_goal == "完成 A/B/C 三阶段"
 
     @pytest.mark.parametrize(
         ("legacy_enabled", "expected_mode"),

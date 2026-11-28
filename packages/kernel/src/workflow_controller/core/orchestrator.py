@@ -55,6 +55,7 @@ from workflow_controller.core.orchestrator_helpers import (
     _build_pre_tool_use_denial,
     _build_pre_tool_use_event,
     _build_reviewer_runtime_config,
+    _build_reviewer_task_goal_updated_event,
     _build_run_attached_event,
     _build_session_auto_event,
     _build_session_complete_event,
@@ -1013,6 +1014,41 @@ class Orchestrator:
             raise RuntimeError("session reviewer 配置缺失")
         session.config.reviewer.mode = mode
         await self.pool.persist(session)
+
+    async def set_session_reviewer_task_goal(self, session_id: str, task_goal: str) -> str:
+        """更新会话当前生效的 reviewer 任务目标（两处落点同步），返回保存后的值。"""
+        cleaned = (task_goal or "").strip()
+        if not cleaned:
+            raise ValueError("task_goal must not be empty")
+        session = self.pool.get(session_id)
+        restored = session is None
+        if restored:
+            session = self.pool.restore_from_store(session_id)
+        if session is None:
+            raise ValueError(f"session not found: {session_id}")
+        try:
+            await self._ensure_session_snapshots(session)
+            snapshot = session.config.reviewer
+            if snapshot is None:
+                raise RuntimeError("session reviewer 配置缺失")
+            previous = snapshot.task_goal
+            if previous != cleaned:
+                snapshot.task_goal = cleaned
+                session.config.criteria = {
+                    **(session.config.criteria or {}),
+                    "task_goal": cleaned,
+                }
+                reviewer = self._session_reviewers.get(session_id)
+                if reviewer is not None:
+                    reviewer.set_task_goal(cleaned)
+                await self.pool.persist(session)
+                await self.bus.emit(
+                    _build_reviewer_task_goal_updated_event(session_id, previous, cleaned)
+                )
+        finally:
+            if restored:
+                self.pool.discard(session_id)
+        return cleaned
 
     def set_reviewer_mode(self, mode: str) -> None:
         """Toggle between 'auto' (reviewer auto-answers + hooks inject reminder)
